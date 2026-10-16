@@ -1,0 +1,56 @@
+import { locateAssetDisableHashing } from './locate_asset';
+
+let by_ext = {};
+let by_match = [];
+
+// cb(filename)
+export function filewatchOn(ext_or_search, cb) {
+  if (ext_or_search[0] === '.') {
+    by_ext[ext_or_search] = by_ext[ext_or_search] || [];
+    by_ext[ext_or_search].push(cb);
+  } else {
+    by_match.push([ext_or_search, cb]);
+  }
+}
+
+let message_cb;
+// cb(message)
+export function filewatchMessageHandler(cb) {
+  message_cb = cb;
+}
+
+function onFileChange(filename) {
+  console.log(`FileWatch change: ${filename}`);
+  locateAssetDisableHashing();
+  let ext_idx = filename.lastIndexOf('.');
+  let did_reload = false;
+  if (ext_idx !== -1) {
+    let ext = filename.slice(ext_idx);
+    let cbs = by_ext[ext];
+    if (cbs) {
+      for (let ii = 0; ii < cbs.length; ++ii) {
+        if (cbs[ii](filename) !== false) {
+          did_reload = true;
+        }
+      }
+    }
+  }
+  for (let ii = 0; ii < by_match.length; ++ii) {
+    if (filename.match(by_match[ii][0])) {
+      if (by_match[ii][1](filename) !== false) {
+        did_reload = true;
+      }
+    }
+  }
+  if (message_cb && did_reload) {
+    message_cb(`Reloading: ${filename}`);
+  }
+}
+
+export function filewatchTriggerChange(filename) {
+  onFileChange(filename);
+}
+
+export function filewatchStartup(client) {
+  client.onMsg('filewatch', onFileChange);
+}
