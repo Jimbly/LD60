@@ -96,6 +96,7 @@ const HP = HP_MASK<<HP_SHIFT;
 const DOUBLE = 1<<10;
 const QUADRUPLE = 1<<11;
 const XOFFS_SHIFT = 12; // 2 bits
+const NOBALLS = 1<<14;
 
 type Board = number[][];
 
@@ -251,7 +252,7 @@ class BreakoutState {
         ball_pos[0] = 0 - ball_pos[0];
         ball_dir[0] *= -1;
       }
-      let totalw = board[0].length;
+      let totalw = board[0].length; // (MINIGAME_W + 1) * 3;
       if (ball_pos[0] > totalw-1) {
         ball_pos[0] = totalw-1 - (ball_pos[0] - (totalw-1));
         ball_dir[0] *= -1;
@@ -283,25 +284,7 @@ class BreakoutState {
         } else {
           let v = board[by]?.[bx];
           if (v) {
-            if (!(v & INDESTRUCTIBLE)) {
-              let newv = 0;
-              if (v & HP) {
-                let hp = (v & HP) >> HP_SHIFT;
-                hp--;
-                if (hp) {
-                  newv = (v & ~HP) | (hp << HP_SHIFT);
-                }
-              }
-              let block_w = (v & QUADRUPLE) ? 4 : (v & DOUBLE) ? 2 : 1;
-              let block_xoffs = (v >> XOFFS_SHIFT) & 3;
-              let blockx = floor((bx - block_xoffs) / block_w) * block_w + block_xoffs;
-              for (let ii = 0; ii < block_w; ++ii) {
-                let xx = blockx + ii;
-                if (board[by][xx]) {
-                  board[by][xx] = newv;
-                }
-              }
-            }
+            state.hitBlock(bx, by);
             if (bx !== old_bx) {
               ball_dir[0] *= -1;
               ball_pos[0] += 2 * ((min(bx, old_bx) + 0.5) - ball_pos[0]);
@@ -444,8 +427,11 @@ class BlocksState {
     this.newBoard();
   }
   setBoard(x: number, y: number, v: number): void {
-    let { board, xoffs } = this;
+    let { board, xoffs, w } = this;
     let xpos = x*2 + xoffs;
+    if (x >= w) {
+      xpos++;
+    }
     let newv = v;
     if (v) {
       newv |= DOUBLE;
@@ -456,8 +442,43 @@ class BlocksState {
     board[y][xpos + 1] = newv;
   }
   logicBoard(x: number, y: number): number {
-    let v = this.board[y][this.xoffs + x * 2];
+    let { board, xoffs, w } = this;
+    let xx = x * 2;
+    if (x >= w) {
+      xx++;
+    }
+    let v = board[y][xoffs + xx];
     return v & (TARGET | COLORBITS);
+  }
+  removeCursor(): void {
+    let { state, xoffs, pos, block, w } = this;
+    let { board } = state;
+    let px = round(pos[0]);
+    let py = floor(pos[1]);
+    let xx = px * 2 + xoffs;
+    if (px >= w) {
+      xx++;
+    }
+    let v = block | INDESTRUCTIBLE;
+    assert(board[py][xx] === v);
+    assert(board[py][xx+1] === v);
+    board[py][xx] = 0;
+    board[py][xx+1] = 0;
+  }
+  addCursor(): void {
+    let { state, xoffs, pos, block, w } = this;
+    let { board } = state;
+    let px = round(pos[0]);
+    let py = floor(pos[1]);
+    let xx = px * 2 + xoffs;
+    if (px >= w) {
+      xx++;
+    }
+    let v = block | INDESTRUCTIBLE;
+    assert(!board[py][xx]);
+    assert(!board[py][xx+1]);
+    board[py][xx] = v;
+    board[py][xx+1] = v;
   }
   newPiece(): void {
     let { w, h } = this;
@@ -507,6 +528,8 @@ class BlocksState {
     if (this.logicBoard(px, py)) {
       // lose
       this.newBoard();
+    } else {
+      this.addCursor();
     }
   }
   newBoard(): void {
@@ -528,8 +551,9 @@ class BlocksState {
   }
   down_time = 0;
   update(dt: number): void {
-    let { pos, w, h } = this;
+    let { pos, w, h, board, xoffs } = this;
     let pspd = dt / 250;
+    this.removeCursor();
     let old_px = round(pos[0]);
     let old_py = floor(pos[1]);
     assert(!this.logicBoard(old_px, old_py));
@@ -545,8 +569,27 @@ class BlocksState {
     if (actionDown('right')) {
       pos[0] += pspd;
     }
-    pos[0] = clamp(pos[0], 0, w - 1);
     let px = round(pos[0]);
+    if (px > old_px && px === w || px < old_px && px === w - 1) {
+      // bumping right edge, do damage, or pass through
+      let v = board[old_py][w*2 + xoffs];
+      if (v & INDESTRUCTIBLE) {
+        pos[0] = old_px;
+      } else {
+        let hp = (v >> HP_SHIFT) & HP_MASK;
+        if (hp === 1) {
+          // pass through
+        } else {
+          // bump, do damage
+          hp = 1;
+          v = (v & ~(HP_MASK << HP_SHIFT)) | (hp << HP_SHIFT);
+          board[old_py][w*2 + xoffs] = v;
+          pos[0] = old_px;
+        }
+      }
+    }
+    pos[0] = clamp(pos[0], 0, w * 2);
+    px = round(pos[0]);
     if (this.logicBoard(px, old_py)) {
       // user pushed into something horizontally
       px = old_px;
@@ -579,6 +622,8 @@ class BlocksState {
       } else {
         assert(false); // should have been blocked above
       }
+    } else {
+      this.addCursor();
     }
 
     let any_targets = false;
@@ -596,17 +641,7 @@ class BlocksState {
     }
   }
   render(): void {
-    terminal.normal();
-    let { pos, block, xoffs } = this;
-    let fg = BLOCK_COLORS[block];
-    terminal.print({
-      x: round(pos[0]) * 2 + xoffs,
-      y: floor(pos[1]),
-      fg: fg,
-      bg: fg - 8,
-      text: '▒▒',
-    });
-    terminal.normal();
+    // nothing
   }
 }
 
@@ -707,19 +742,15 @@ class InvadersState {
       dx = 0;
       dy = 1;
     }
-    let dead = false;
-    for (let ii = 0; ii < invaders.length; ++ii) {
+    for (let ii = invaders.length - 1; ii >= 0; --ii) {
       let invader = invaders[ii];
       invader[0] += dx;
       invader[1] += dy;
       if (invader[1] === h) {
-        dead = true;
+        invaders.splice(ii, 1);
       }
     }
     this.placeInvaders();
-    if (dead) {
-      this.newBoard();
-    }
   }
   fireBullets(dt: number): void {
     this.shoot_counter -= dt;
@@ -880,6 +911,8 @@ class InvadersState {
 
 const KABOOM_SPEED = 100;
 const KABOOM_BULLET_TIME = 200;
+const KABOOM_SHOOT_REST_TIME = 4000;
+const KABOOM_NUM_SHOTS = 10;
 class KaboomState {
   w = MINIGAME_W;
   h = MINIGAME_H;
@@ -889,57 +922,67 @@ class KaboomState {
   enemy = 0;
   enemy_counter = 0;
   shoot_counter = 0;
+  shoot_count = 0;
   bullet_counter = 0;
   enemy_target = 0;
-  bullets!: JSVec2[];
-  board!: number[][];
+  board: Board;
   xoffs: number;
+  state: GameState;
   constructor(xoffs: number, state: GameState) {
-    this.xoffs = xoffs;
+    this.xoffs = xoffs + 1;
+    this.state = state;
+    this.board = state.board;
     this.newGame();
   }
   newGame(): void {
-    this.player = this.w / 2;
-    this.enemy = this.w / 2;
+    let { state, w, h, xoffs, board } = this;
+    this.player = w / 2;
+    this.enemy = w / 2;
     this.enemy_counter = 0;
     this.shoot_counter = 2000;
-    this.bullets = [];
-    this.board = [];
-    let { w, h } = this;
-    for (let yy = 0; yy < h; ++yy) {
-      let row: number[] = [];
-      this.board.push(row);
+    this.shoot_count = 0;
+    this.bullet_counter = KABOOM_BULLET_TIME / 2;
+    state.clearBoard(xoffs);
+    state.clearBullets('kaboom');
+    for (let yy = h - 2; yy < h; ++yy) {
+      let row = board[yy];
       for (let xx = 0; xx < w/2; ++xx) {
-        let color = yy >= h - 2 ? randInt(BLOCK_COLORS.length - 1) + 1 : 0;
-        row.push(color, color);
+        let v = randInt(BLOCK_COLORS.length - 1) + 1;
+        let xpos = xoffs + xx * 2;
+        v |= DOUBLE;
+        let xmod = xpos & 1;
+        v |= xmod << XOFFS_SHIFT;
+        row[xpos] = v;
+        row[xpos + 1] = v;
       }
     }
   }
   died(): void {
     this.newGame();
   }
-  updateBullets(dt: number): void {
-    this.bullet_counter -= dt;
-    if (this.bullet_counter > 0) {
-      return;
-    }
-    this.bullet_counter += KABOOM_BULLET_TIME;
-    let { bullets, h } = this;
-    for (let ii = bullets.length - 1; ii >= 0; --ii) {
-      let b = bullets[ii];
-      b[1]++;
-      if (b[1] === h) {
-        ridx(bullets, ii);
-      }
-    }
-  }
   update(dt: number): void {
-    let { w, py, player_width, bullets, board } = this;
-    this.updateBullets(dt);
+    this.bullet_counter -= dt;
+    if (this.bullet_counter < 0) {
+      this.bullet_counter += KABOOM_BULLET_TIME;
+    }
+    let { w, h, py, player_width, board, state, xoffs } = this;
+    let { bullets } = state;
     this.shoot_counter -= dt;
     if (this.shoot_counter <= 0) {
       this.shoot_counter += KABOOM_SPEED * 3;
-      this.bullets.push([this.enemy, 1]);
+      this.shoot_count++;
+      bullets.push({
+        x: this.enemy + xoffs,
+        y: 1,
+        ydir: 1,
+        ycounter: this.bullet_counter,
+        ytime: KABOOM_BULLET_TIME,
+        type: 'kaboom',
+      });
+      if (this.shoot_count === KABOOM_NUM_SHOTS) {
+        this.shoot_count = 0;
+        this.shoot_counter += KABOOM_SHOOT_REST_TIME;
+      }
     }
     this.enemy_counter -= dt;
     if (this.enemy_counter <= 0) {
@@ -959,33 +1002,35 @@ class KaboomState {
       this.player = min(w - (player_width - 1) / 2 - 1, this.player + hspd);
     }
 
-    let px = round(this.player - (player_width - 1) / 2);
+    let px = round(this.player - (player_width - 1) / 2) + xoffs;
     let dead = false;
     for (let ii = bullets.length - 1; ii >= 0; --ii) {
       let b = bullets[ii];
+      if (b.type !== 'kaboom') {
+        continue;
+      }
       if (
-        b[1] === py && b[0] >= px && b[0] < px + player_width ||
-        b[1] === py + 1 && b[0] >= px + 1 && b[0] < px + player_width - 1
+        b.y === py && b.x >= px && b.x < px + player_width ||
+        b.y === py + 1 && b.x >= px + 1 && b.x < px + player_width - 1
       ) {
         ridx(bullets, ii);
-      } else if (board[b[1]][b[0]]) {
-        let bx = b[0] & ~1;
-        board[b[1]][bx] = 0;
-        board[b[1]][bx + 1] = 0;
+      } else if (board[b.y][b.x]) {
+        state.hitBlock(b.x, b.y);
         ridx(bullets, ii);
-        let any_left = false;
-        for (let yy = 0; yy < board.length; ++yy) {
-          for (let xx = 0; xx < board[yy].length; ++xx) {
-            if (board[yy][xx]) {
-              any_left = true;
-              break;
-            }
-          }
-        }
-        if (!any_left) {
-          dead = true;
+      }
+    }
+
+    let any_left = false;
+    for (let yy = 0; yy < h; ++yy) {
+      for (let xx = 0; xx < w; ++xx) {
+        if (board[yy][xoffs + xx]) {
+          any_left = true;
+          break;
         }
       }
+    }
+    if (!any_left) {
+      dead = true;
     }
     if (dead) {
       this.died();
@@ -993,54 +1038,37 @@ class KaboomState {
   }
   render(): void {
     terminal.normal();
-    let { bullets, player, player_width, enemy, py, board, w, h } = this;
+    let { player, player_width, enemy, py, xoffs, board } = this;
 
-    let px = round(player - (player_width - 1) / 2);
-    terminal.print({
-      x: max(0, px),
-      y: py,
-      fg: 11,
-      text: '\\═══/',
-    });
-    terminal.print({
-      x: max(0, px),
-      y: py + 1,
-      fg: 11,
-      text: ' \\═/',
-    });
+    let px = round(player - (player_width - 1) / 2) + xoffs;
+    function overlay(x: number, y: number, str: string): void {
+      for (let ii = 0; ii < str.length; ++ii) {
+        let ch = str[ii];
+        let v = board[y][x + ii];
+        let c = v & COLORBITS;
+        let bg = 0;
+        if (c) {
+          bg = BLOCK_COLORS[c] - 8;
+        }
+        terminal.print({
+          x: x + ii,
+          y,
+          fg: 11,
+          bg,
+          text: ch,
+        });
+      }
+    }
+    overlay(max(0, px), py, '\\═══/');
+    overlay(max(0, px) + 1, py + 1, '\\═/');
+    terminal.normal();
 
     terminal.print({
-      x: enemy,
+      x: enemy + xoffs,
       y: 0,
       fg: 12,
       text: '\x01',
     });
-
-    for (let ii = 0; ii < bullets.length; ++ii) {
-      let b = bullets[ii];
-      terminal.print({
-        x: b[0],
-        y: b[1],
-        fg: 12,
-        text: '\x0f',
-      });
-    }
-
-    for (let yy = 0; yy < h; ++yy) {
-      let row = board[yy];
-      for (let xx = 0; xx < w; ++xx) {
-        let v = row[xx];
-        if (v) {
-          terminal.print({
-            x: xx,
-            y: yy,
-            fg: BLOCK_COLORS[v & COLORBITS],
-            text: (v & TARGET) ? '▒' : '█',
-          });
-        }
-      }
-    }
-
   }
 }
 
@@ -1074,7 +1102,7 @@ class GameState {
       board.push(row);
       for (let xx = 0; xx < w; ++xx) {
         let v = 0;
-        if (xx === 0 || xx === c3 || xx === w - 1) {
+        if (xx === 0 || xx === w - 1) {
           v = BORDER | INDESTRUCTIBLE | BORDER_BLOCK;
         } else if (xx === c1 || xx === c2) {
           v = BORDER;
@@ -1083,6 +1111,16 @@ class GameState {
             (INITIAL_HP<<HP_SHIFT);
           v |= BORDER_BLOCK;
           if (!INITIAL_HP) {
+            v = 0;
+          }
+        } else if (xx === c3) {
+          v = BORDER;
+          let hp = 3;
+          v |= (yy === 0 || yy > MINIGAME_H - 4) ?
+            INDESTRUCTIBLE :
+            ((hp<<HP_SHIFT) | NOBALLS);
+          v |= BORDER_BLOCK;
+          if (!hp && !(v & INDESTRUCTIBLE)) {
             v = 0;
           }
         }
@@ -1144,6 +1182,30 @@ class GameState {
       }
     }
   }
+  hitBlock(bx: number, by: number): void {
+    let { board } = this;
+    let v = board[by][bx];
+    if (v & (INDESTRUCTIBLE | NOBALLS)) {
+      return;
+    }
+    let newv = 0;
+    if (v & HP) {
+      let hp = (v & HP) >> HP_SHIFT;
+      hp--;
+      if (hp) {
+        newv = (v & ~HP) | (hp << HP_SHIFT);
+      }
+    }
+    let block_w = (v & QUADRUPLE) ? 4 : (v & DOUBLE) ? 2 : 1;
+    let block_xoffs = (v >> XOFFS_SHIFT) & 3;
+    let blockx = floor((bx - block_xoffs) / block_w) * block_w + block_xoffs;
+    for (let ii = 0; ii < block_w; ++ii) {
+      let xx = blockx + ii;
+      if (board[by][xx]) {
+        board[by][xx] = newv;
+      }
+    }
+  }
 }
 let game_state: GameState;
 export function gameState(): GameState {
@@ -1162,7 +1224,7 @@ export function setScore(): void {
 }
 
 let view_x = 1;
-let view_board = { x: view_x, y: 1, w: MINIGAME_W * 4 + 3, h: MINIGAME_H };
+let view_board = { x: view_x, y: 1, w: MINIGAME_W * 4 + 4, h: MINIGAME_H };
 let view_invaders = { x: view_x, y: 1, w: MINIGAME_W, h: MINIGAME_H };
 view_x += MINIGAME_W + 1;
 let view_breakout = { x: view_x, y: 1, w: MINIGAME_W, h: MINIGAME_H };
@@ -1213,7 +1275,7 @@ function statePlay(dt: number): void {
   terminal.subViewPush(view_board);
   game_state.blocks.render();
   terminal.subViewPop();
-  terminal.subViewPush(view_kaboom);
+  terminal.subViewPush(view_board);
   game_state.kaboom.render();
   terminal.subViewPop();
   terminal.subViewPush(view_board);
