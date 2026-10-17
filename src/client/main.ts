@@ -23,12 +23,12 @@ import { scaleSizes, setFontHeight } from 'glov/client/ui';
 import { ansi } from 'glov/common/ansi';
 import { randSpatial } from 'glov/common/rand_fast';
 import { Rec } from 'glov/common/types';
-import { clamp, ridx, sign } from 'glov/common/util';
+import { clamp, lerp, ridx, sign } from 'glov/common/util';
 import { JSVec2, v2iNormalize, v2lerp } from 'glov/common/vmath';
 import { SOUND_DATA } from './sound_data';
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-const { abs, cos, floor, random, round, sin, max, min, exp, PI } = Math;
+const { abs, ceil, cos, floor, random, round, sin, max, min, exp, pow, PI } = Math;
 
 window.Z = window.Z || {};
 Z.BACKGROUND = 1;
@@ -137,6 +137,7 @@ interface Minigame {
   newBoard(): void;
   won(): void;
   died(): void;
+  level: number;
 }
 
 type Ball = {
@@ -146,6 +147,7 @@ type Ball = {
 
 const NUM_BALLS = 8;
 class BreakoutState implements Minigame {
+  level = 0;
   board: Board;
   w = MINIGAME_W;
   h = MINIGAME_H;
@@ -339,6 +341,7 @@ function matches(color: number, block: number): boolean {
   return block === color || block === color + TARGET;
 }
 class BlocksState implements Minigame {
+  level = 0;
   w = floor(MINIGAME_W/2);
   h = MINIGAME_H;
   num_blocks = 4;
@@ -586,13 +589,10 @@ class BlocksState implements Minigame {
   }
 }
 
-const INVADER_PAD = 3;
-const NUM_INVADERS = 18;
-const INVADER_MOVE_TIME = 1000;
-const INVADER_SHOOT_TIME = INVADER_MOVE_TIME * 3;
 const INVADER_BULLET_TIME = 250;
-const PLAYER_SHOOT_TIME = INVADER_MOVE_TIME;
+const PLAYER_SHOOT_TIME = 1000;
 class InvadersState implements Minigame {
+  level = 0;
   invaders: [number, number, number, string][] = [];
   w = MINIGAME_W;
   h = MINIGAME_H;
@@ -609,28 +609,49 @@ class InvadersState implements Minigame {
   shoot_idx = 0;
   move_dir = 1;
   player = 0;
+  invader_move_time = 0;
+  invader_shoot_time = 0;
   newBoard(): void {
     this.player = this.w/2;
     this.state.clearBullets('invader_player');
     this.state.clearBullets('invader_enemy');
     this.invaders = [];
     let { invaders, w, xoffs } = this;
-    let xx = INVADER_PAD;
     let yy = 0;
     let opts = ['\x0f', '\x15'];
-    for (let ii = 0; ii < NUM_INVADERS; ++ii) {
+    let num_invaders;
+    let invader_pad = 3;
+    let level_exp = pow(0.9, this.level - 1);
+    this.invader_move_time = 1000;
+    this.invader_shoot_time = lerp(level_exp, this.invader_move_time / 2, this.invader_move_time * 3);
+
+    if (this.level === 0) {
+      num_invaders = 4;
+      yy += 8;
+    } else {
+      num_invaders = min(7 * 10, 8 + this.level * 4);
+      if (this.level >= 10) {
+        invader_pad = 2;
+      }
+      if (num_invaders < 6 * 4) {
+        yy += 4 - ceil(num_invaders / 6);
+      }
+    }
+    let xx = invader_pad;
+
+    for (let ii = 0; ii < num_invaders; ++ii) {
       invaders.push([xx, yy, [4, 5, 12, 13][randInt(4)], opts[ii % opts.length]]);
       xx += 2;
-      if (xx >= w - INVADER_PAD) {
-        xx = INVADER_PAD;
+      if (xx >= w - invader_pad) {
+        xx = invader_pad;
         yy++;
       }
     }
     this.state.clearBoard(xoffs);
     this.placeInvaders();
-    this.move_counter = INVADER_MOVE_TIME;
+    this.move_counter = this.invader_move_time;
     this.move_dir = 1;
-    this.shoot_counter = INVADER_SHOOT_TIME;
+    this.shoot_counter = this.invader_shoot_time;
     this.shoot_idx = 0;
     this.player_shoot_counter = PLAYER_SHOOT_TIME / 2 + INVADER_BULLET_TIME / 2;
   }
@@ -666,7 +687,7 @@ class InvadersState implements Minigame {
       return;
     }
     this.removeInvaders();
-    this.move_counter += INVADER_MOVE_TIME;
+    this.move_counter += this.invader_move_time;
     let { invaders, move_dir, w, h } = this;
     let bounce = false;
     for (let ii = 0; ii < invaders.length; ++ii) {
@@ -698,7 +719,7 @@ class InvadersState implements Minigame {
     if (this.shoot_counter > 0) {
       return;
     }
-    this.shoot_counter += INVADER_SHOOT_TIME;
+    this.shoot_counter += this.invader_shoot_time;
     let { invaders, shoot_idx, state, h, xoffs } = this;
     for (let ii = 0; ii < invaders.length; ++ii) {
       let invader = invaders[ii];
@@ -855,6 +876,7 @@ const KABOOM_BULLET_TIME = 200;
 const KABOOM_SHOOT_REST_TIME = 4000;
 const KABOOM_NUM_SHOTS = 10;
 class KaboomState implements Minigame {
+  level = 0;
   w = MINIGAME_W;
   h = MINIGAME_H;
   player_width = 5;
@@ -1175,7 +1197,13 @@ class GameState {
       this.lives.push(3);
     }
     this.game_over = false;
-    this.meta = 3;
+    this.meta = 0;
+    if (MODE_DEVELOPMENT) {
+      this.meta = 0;
+      for (let ii = 0; ii < min(this.meta, this.minigames.length); ++ii) {
+        this.minigames[ii].level++;
+      }
+    }
     this.active = META_MAP[this.meta];
     // if (MODE_DEVELOPMENT) {
     //   this.gameLost(this.breakout);
@@ -1243,6 +1271,7 @@ class GameState {
     if (this.meta >= 4) {
       this.lives[idx]++;
     }
+    game.level++;
     if (this.meta < META_MAP.length - 1) {
       this.meta++;
       this.active = META_MAP[this.meta];
@@ -1422,6 +1451,9 @@ class GameState {
 
     if (this.meta >= 4) {
       for (let ii = 0; ii < minigames.length; ++ii) {
+        if (!active[ii]) {
+          continue;
+        }
         let minigame = minigames[ii];
         let xoffs = minigame.xoffs;
         if (ii === 1) {
@@ -1442,6 +1474,12 @@ class GameState {
           terminal.print({ text: good ? '♥' : '♦', fg: good ? 10 : 8 });
         }
         terminal.print({ text: ']', fg: border });
+
+        y++;
+        let text = `Level ${minigame.level}`;
+        ballsx = floor((MINIGAME_W - text.length) / 2);
+        terminal.moveto(ballsx + xoffs, y);
+        terminal.print({ text, fg: 7 });
       }
     }
 
@@ -1521,7 +1559,8 @@ class GameState {
       }
       terminal.normal();
     }
-
+  }
+  checkGameOver(): void {
     if (this.game_over) {
       let w = 41;
       let x = floor((CHW - (w + 2))/2);
@@ -1558,7 +1597,6 @@ class GameState {
       }
     }
   }
-
 }
 let game_state: GameState;
 export function gameState(): GameState {
@@ -1625,6 +1663,7 @@ function statePlay(dt: number): void {
   terminal.subViewPush(view_board);
   game_state.render();
   terminal.subViewPop();
+  game_state.checkGameOver();
 
   terminal.render();
 }
@@ -1690,6 +1729,8 @@ export function backToGame(): void {
 
 export function newGameInit(): void {
   game_state = new GameState();
+  terminal.normal();
+  terminal.clear();
   statePlayInit();
 }
 
