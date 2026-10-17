@@ -80,10 +80,11 @@ function randInt(range: number): number {
   return floor(random() * range);
 }
 
-const MINIGAME_W = 18 + 2;
+const MINIGAME_W = 18;
 const MINIGAME_H = 20;
 
 const BLOCK_COLORS = [15, 12, 9, 14, 11];
+const BORDER_BLOCK = 4;
 const COLORBITS = 0xf;
 const TARGET = 1<<4;
 const INDESTRUCTIBLE = 1<<5;
@@ -91,80 +92,130 @@ const BORDER = 1<<6;
 const HP_SHIFT = 7;
 const HP_MASK = 0x7;
 const HP = HP_MASK<<HP_SHIFT;
+const DOUBLE = 1<<10;
+const QUADRUPLE = 1<<11;
+const XOFFS_SHIFT = 12; // 2 bits
+
+type Board = number[][];
+
+type BulletType = 'invader_player' | 'invader_enemy' | 'kaboom';
+const BULLET_CH: Record<BulletType, string> = {
+  invader_player: '|',
+  invader_enemy: '|',
+  kaboom: '\x0f',
+};
+const BULLET_FG: Record<BulletType, number> = {
+  invader_player: 10,
+  invader_enemy: 7,
+  kaboom: 12,
+};
+type Bullet = {
+  x: number;
+  y: number;
+  ydir: number;
+  ytime: number;
+  ycounter: number;
+  type: BulletType;
+};
 
 const BREAKOUT_BLOCK_W = 4;
 
+function gameStateRenderEarly(state: GameState): void {
+  terminal.normal();
+  terminal.clear();
+
+  let { board } = state;
+
+  for (let yy = 0; yy < board.length; ++yy) {
+    let row = board[yy];
+    for (let xx = 0; xx < row.length; ++xx) {
+      let v = row[xx];
+      if (v) {
+        let ch = (v & INDESTRUCTIBLE) ? '▓' : '█';
+        let hp = (v & HP) >> HP_SHIFT;
+        let fg = BLOCK_COLORS[v & COLORBITS];
+        let bg = BLOCK_COLORS[v & COLORBITS] - 8;
+        if (v & BORDER) {
+          bg = 0;
+          ch = ((v & INDESTRUCTIBLE) || hp === 3) ? '║' : '│';
+          if (hp === 1) {
+            fg -= 8;
+          }
+        }
+        terminal.print({
+          x: xx,
+          y: yy,
+          fg,
+          bg,
+          text: ch,
+        });
+      }
+    }
+  }
+  terminal.normal();
+}
+
+function gameStateRenderLate(state: GameState): void {
+  let { bullets } = state;
+  for (let ii = 0; ii < bullets.length; ++ii) {
+    let b = bullets[ii];
+    terminal.print({
+      x: b.x,
+      y: b.y,
+      fg: BULLET_FG[b.type],
+      text: BULLET_CH[b.type],
+    });
+  }
+}
+
 class BreakoutState {
-  board: number[][];
+  board: Board;
   w = MINIGAME_W;
   h = MINIGAME_H;
   ball_pos!: JSVec2;
   ball_dir!: JSVec2;
   player: number;
   player_width = 5;
-  block_xoffs = 1 + floor(((this.w - 2) % BREAKOUT_BLOCK_W) / 2);
+  block_xoffs = 1 + floor((this.w % BREAKOUT_BLOCK_W) / 2);
   newBall(): void {
-    this.ball_pos = [round(this.player), this.h - 2];
+    this.ball_pos = [round(this.player) + this.xoffs, this.h - 2];
     this.ball_dir = [0, -1];
   }
-  constructor() {
-    this.board = [];
-    let board = this.board;
+  xoffs: number;
+  state: GameState;
+  constructor(xoffs: number, state: GameState) {
+    this.xoffs = xoffs;
+    this.state = state;
+    let board = this.board = state.board;
     let { block_xoffs, w, h } = this;
     let blocks_start = 1;
     let blocks_end = floor(h / 2) - 1;
-    while (board.length < blocks_start) {
-      let row: number[] = [];
-      for (let ii = 0; ii < w; ++ii) {
-        row.push(0);
-      }
-      board.push(row);
-    }
-    while (board.length < blocks_end) {
-      let row: number[] = [];
-      while (row.length < block_xoffs) {
-        row.push(0);
-      }
-      while (row.length + BREAKOUT_BLOCK_W < w) {
+    let blocks_per_row = floor((w - block_xoffs) / BREAKOUT_BLOCK_W);
+    for (let yy = blocks_start; yy < blocks_end; ++yy) {
+      let row = board[yy];
+      for (let ii = 0; ii < blocks_per_row; ++ii) {
         let color = 1 + randInt(BLOCK_COLORS.length - 1);
-        for (let ii = 0; ii < BREAKOUT_BLOCK_W; ++ii) {
-          row.push(color);
+        color |= QUADRUPLE;
+        let x0 = xoffs + block_xoffs + ii * BREAKOUT_BLOCK_W;
+        color |= (x0 & 3) << XOFFS_SHIFT;
+        for (let jj = 0; jj < BREAKOUT_BLOCK_W; ++jj) {
+          row[x0 + jj] = color;
         }
       }
-      while (row.length < w) {
-        row.push(0);
-      }
-      row.pop();
-      board.push(row);
-    }
-    while (board.length < h) {
-      let row: number[] = [];
-      for (let ii = 0; ii < w; ++ii) {
-        row.push(0);
-      }
-      board.push(row);
     }
 
-    for (let yy = 0; yy < h; ++yy) {
-      let v = (yy === 0 || yy > h*0.667) ?
-        INDESTRUCTIBLE | BORDER :
-        (3<<HP_SHIFT) | BORDER;
-      v |= 4;
-      board[yy][0] = v;
-      board[yy][w-1] = v;
-    }
     this.player = this.w / 2;
     this.newBall();
   }
 
   update(dt: number): void {
-    let { ball_pos, ball_dir, w, h, player_width, board, block_xoffs } = this;
+    let { xoffs, ball_pos, ball_dir, w, h, player_width, board } = this;
     let spd = dt * 0.01;
     if (actionDown('left')) {
       this.player = max((this.player_width - 1) / 2 + 1, this.player - spd);
     }
     if (actionDown('right')) {
-      this.player = min(this.w - (this.player_width - 1) / 2 - 2, this.player + spd);
+      this.player = min(w - (this.player_width - 1) / 2 - 2, this.player + spd);
     }
     let old_bx = round(ball_pos[0]);
     let old_by = round(ball_pos[1]);
@@ -175,8 +226,9 @@ class BreakoutState {
       ball_pos[0] = 0 - ball_pos[0];
       ball_dir[0] *= -1;
     }
-    if (ball_pos[0] > w-1) {
-      ball_pos[0] = w-1 - (ball_pos[0] - (w-1));
+    let totalw = board[0].length;
+    if (ball_pos[0] > totalw-1) {
+      ball_pos[0] = totalw-1 - (ball_pos[0] - (totalw-1));
       ball_dir[0] *= -1;
     }
     if (ball_pos[1] < 0) {
@@ -185,7 +237,7 @@ class BreakoutState {
     }
     let bx = round(ball_pos[0]);
     let by = round(ball_pos[1]);
-    let player0 = round(this.player - (player_width - 1)/2);
+    let player0 = round(this.player - (player_width - 1)/2) + xoffs;
     if (bx !== old_bx || by !== old_by) {
       if (by === h - 1) {
         if (
@@ -194,7 +246,8 @@ class BreakoutState {
         ) {
           ball_dir[1] *= -1;
           ball_pos[1] = min(ball_pos[1], h - 2.5);
-          let impact = clamp((ball_pos[0] - this.player) / (player_width / 2), -1, 1);
+          let impact = clamp((ball_pos[0] - (this.player + xoffs)) / (player_width / 2), -1, 1);
+          impact *= 0.8;
           let vec = [sin(PI/2 * impact), -cos(PI/2 * impact)] as const;
           v2lerp(ball_dir, abs(impact) * 0.75, ball_dir, vec);
         }
@@ -212,8 +265,10 @@ class BreakoutState {
                 newv = (v & ~HP) | (hp << HP_SHIFT);
               }
             }
-            let blockx = floor((bx - block_xoffs) / BREAKOUT_BLOCK_W) * BREAKOUT_BLOCK_W + block_xoffs;
-            for (let ii = 0; ii < BREAKOUT_BLOCK_W; ++ii) {
+            let block_w = (v & QUADRUPLE) ? 4 : (v & DOUBLE) ? 2 : 1;
+            let block_xoffs = (v >> XOFFS_SHIFT) & 3;
+            let blockx = floor((bx - block_xoffs) / block_w) * block_w + block_xoffs;
+            for (let ii = 0; ii < block_w; ++ii) {
               let xx = blockx + ii;
               if (board[by][xx]) {
                 board[by][xx] = newv;
@@ -234,40 +289,7 @@ class BreakoutState {
     v2iNormalize(ball_dir);
   }
   render(): void {
-    terminal.normal();
-    terminal.fill({
-      x: 1, y: 0, w: MINIGAME_W - 2, h: MINIGAME_H,
-    });
-    let { h, board, ball_pos, player, player_width } = this;
-    for (let yy = 0; yy < board.length; ++yy) {
-      let row = board[yy];
-      for (let xx = 0; xx < row.length; ++xx) {
-        let v = row[xx];
-        if (v) {
-          if ((v & BORDER) && (v & INDESTRUCTIBLE)) {
-            continue;
-          }
-          let ch = (v & INDESTRUCTIBLE) ? '▓' : '█';
-          let hp = (v & HP) >> HP_SHIFT;
-          let fg = BLOCK_COLORS[v & COLORBITS];
-          let bg = BLOCK_COLORS[v & COLORBITS] - 8;
-          if (v & BORDER) {
-            bg = 0;
-            ch = hp === 3 ? '║' : '│';
-            if (hp === 1) {
-              fg -= 8;
-            }
-          }
-          terminal.print({
-            x: xx,
-            y: yy,
-            fg,
-            bg,
-            text: ch,
-          });
-        }
-      }
-    }
+    let { xoffs, h, ball_pos, player, player_width } = this;
     terminal.normal();
     let player_str = ['\x11'];
     for (let ii = 0; ii < player_width - 2; ++ii) {
@@ -286,7 +308,7 @@ class BreakoutState {
     });
 
     terminal.print({
-      x: round(player) - (player_width - 1) / 2,
+      x: round(player) - (player_width - 1) / 2 + xoffs,
       y: h - 1,
       fg: 9,
       text: player_str.join(''),
@@ -294,6 +316,7 @@ class BreakoutState {
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 class DodgeState {
   player = MINIGAME_W/2;
   player_width = 1;
@@ -353,9 +376,6 @@ class DodgeState {
   }
   render(): void {
     terminal.normal();
-    terminal.fill({
-      x: 1, y: 0, w: MINIGAME_W - 2, h: MINIGAME_H,
-    });
     let { player, h, w, board } = this;
     terminal.print({
       x: round(player),
@@ -398,7 +418,9 @@ class BlocksState {
   pos!: JSVec2;
   logic_board!: number[][];
   board!: number[][];
-  constructor() {
+  xoffs: number;
+  constructor(xoffs: number, state: GameState) {
+    this.xoffs = xoffs;
     this.newBoard();
   }
   setBoard(x: number, y: number, v: number): void {
@@ -549,9 +571,6 @@ class BlocksState {
   }
   render(): void {
     terminal.normal();
-    terminal.fill({
-      x: 1, y: 0, w: MINIGAME_W - 2, h: MINIGAME_H,
-    });
     let { pos, block, board, h } = this;
     let fg = BLOCK_COLORS[block];
     terminal.print({
@@ -584,29 +603,29 @@ const INVADER_PAD = 3;
 const NUM_INVADERS = 20;
 const INVADER_MOVE_TIME = 1000;
 const INVADER_SHOOT_TIME = INVADER_MOVE_TIME * 3;
-const INVADER_BULLET_TIME = 250/2;
+const INVADER_BULLET_TIME = 250;
 const PLAYER_SHOOT_TIME = INVADER_MOVE_TIME;
 class InvadersState {
   invaders: [number, number, number, string][] = [];
-  invader_bullets: [number, number][] = [];
-  player_bullets: [number, number][] = [];
   w = MINIGAME_W;
   h = MINIGAME_H;
-  constructor() {
+  xoffs: number;
+  state: GameState;
+  constructor(xoffs: number, state: GameState) {
+    this.xoffs = xoffs + 1; // ignore border
+    this.state = state;
     this.newBoard();
   }
   move_counter = 0;
   shoot_counter = 0;
   player_shoot_counter = 0;
-  bullet_counter = 0;
   shoot_idx = 0;
-  bullet_idx = 0;
   move_dir = 1;
   player = 0;
   newBoard(): void {
     this.player = this.w/2;
-    this.invader_bullets = [];
-    this.player_bullets = [];
+    this.state.clearBullets('invader_player');
+    this.state.clearBullets('invader_enemy');
     this.invaders = [];
     let { invaders, w } = this;
     let xx = INVADER_PAD;
@@ -624,9 +643,7 @@ class InvadersState {
     this.move_dir = 1;
     this.shoot_counter = INVADER_SHOOT_TIME;
     this.shoot_idx = 0;
-    this.bullet_counter = INVADER_BULLET_TIME;
-    this.bullet_idx = 0;
-    this.player_shoot_counter = PLAYER_SHOOT_TIME / 2;
+    this.player_shoot_counter = PLAYER_SHOOT_TIME / 2 + INVADER_BULLET_TIME / 2;
   }
   died(): void {
     this.newBoard();
@@ -675,7 +692,7 @@ class InvadersState {
       return;
     }
     this.shoot_counter += INVADER_SHOOT_TIME;
-    let { invaders, shoot_idx, invader_bullets, h } = this;
+    let { invaders, shoot_idx, state, h, xoffs } = this;
     for (let ii = 0; ii < invaders.length; ++ii) {
       let invader = invaders[ii];
       if ((ii + shoot_idx) % 4) {
@@ -691,7 +708,14 @@ class InvadersState {
         }
       }
       if (open) {
-        invader_bullets.push([x, y]);
+        state.bullets.push({
+          x: xoffs + x,
+          y,
+          type: 'invader_enemy',
+          ydir: 1,
+          ytime: INVADER_BULLET_TIME,
+          ycounter: INVADER_BULLET_TIME,
+        });
       }
     }
     this.shoot_idx++;
@@ -702,32 +726,15 @@ class InvadersState {
       return;
     }
     this.player_shoot_counter += PLAYER_SHOOT_TIME;
-    let { player_bullets, h, player } = this;
-    player_bullets.push([round(player), h - 2]);
-  }
-  updateBullets(dt: number): void {
-    this.bullet_counter -= dt;
-    if (this.bullet_counter > 0) {
-      return;
-    }
-    this.bullet_counter += INVADER_BULLET_TIME;
-    let { invader_bullets, player_bullets, h } = this;
-    this.bullet_idx = (this.bullet_idx + 1) % 2;
-    let list = this.bullet_idx ? player_bullets : invader_bullets;
-    for (let ii = list.length - 1; ii >= 0; --ii) {
-      let b = list[ii];
-      if (this.bullet_idx) {
-        b[1]--;
-        if (b[1] < 0) {
-          ridx(list, ii);
-        }
-      } else {
-        b[1]++;
-        if (b[1] === h) {
-          ridx(list, ii);
-        }
-      }
-    }
+    let { state, h, player, xoffs } = this;
+    state.bullets.push({
+      x: xoffs + round(player),
+      y: h - 2,
+      type: 'invader_player',
+      ydir: -1,
+      ytime: INVADER_BULLET_TIME,
+      ycounter: INVADER_BULLET_TIME,
+    });
   }
   update(dt: number): void {
     let { w } = this;
@@ -740,44 +747,64 @@ class InvadersState {
     }
 
     this.updateInvaders(dt);
-    this.updateBullets(dt);
     this.fireBullets(dt);
     this.firePlayerBullets(dt);
 
     let px = round(this.player);
     let py = this.h - 1;
     let player_pos = px + py * w;
-    let { invaders, invader_bullets, player_bullets } = this;
-    let player_bullet_pos: Rec<number, JSVec2> = {};
-    for (let ii = 0; ii < player_bullets.length; ++ii) {
-      let pos = player_bullets[ii];
-      player_bullet_pos[pos[0] + pos[1] * w] = pos;
+    let { invaders, state, xoffs } = this;
+    let { bullets } = state;
+    let player_bullet_pos: Rec<number, Bullet> = {};
+    for (let ii = 0; ii < bullets.length; ++ii) {
+      let b = bullets[ii];
+      if (b.type === 'invader_player') {
+        player_bullet_pos[b.x - xoffs + b.y * w] = b;
+      }
     }
     let hit = false;
-    [invaders, invader_bullets].forEach((list) => {
-      let to_remove: number[] = [];
-      list.forEach((item, idx) => {
-        let posidx = item[0] + item[1] * w;
-        if (
-          posidx === player_pos ||
-          posidx === player_pos + 1 ||
-          posidx === player_pos - 1
-        ) {
-          hit = true;
-        }
-        let player_bullet = player_bullet_pos[posidx];
-        if (player_bullet) {
-          to_remove.push(idx);
-          let player_idx = player_bullets.indexOf(player_bullet);
-          assert(player_idx !== -1);
-          player_bullets.splice(player_idx, 1);
-          delete player_bullet_pos[posidx];
-        }
-      });
-      for (let ii = to_remove.length - 1; ii >= 0; --ii) {
-        list.splice(to_remove[ii], 1);
+    let to_remove: Bullet[] = [];
+    function checkHit(x: number, y: number): boolean {
+      let ret = false;
+      let posidx = x + y * w;
+      if (
+        posidx === player_pos ||
+        posidx === player_pos + 1 ||
+        posidx === player_pos - 1
+      ) {
+        hit = true;
+        ret = true;
       }
-    });
+      let player_bullet = player_bullet_pos[posidx];
+      if (player_bullet) {
+        ret = true;
+        to_remove.push(player_bullet);
+        delete player_bullet_pos[posidx];
+      }
+      return ret;
+    }
+    for (let ii = invaders.length - 1; ii >= 0; --ii) {
+      let item = invaders[ii];
+      if (checkHit(item[0], item[1])) {
+        invaders.splice(ii, 1);
+      }
+    }
+    for (let ii = 0; ii < bullets.length; ++ii) {
+      let b = bullets[ii];
+      if (b.type === 'invader_enemy') {
+        if (checkHit(b.x - xoffs, b.y)) {
+          bullets.splice(ii, 1);
+        }
+      }
+    }
+    for (let ii = 0; ii < to_remove.length; ++ii) {
+      let player_bullet = to_remove[ii];
+      let player_idx = bullets.indexOf(player_bullet);
+      if (player_idx !== -1) {
+        assert(player_idx !== -1);
+        bullets.splice(player_idx, 1);
+      }
+    }
     if (hit) {
       this.died();
     } else if (!invaders.length) {
@@ -786,10 +813,7 @@ class InvadersState {
   }
   render(): void {
     terminal.normal();
-    terminal.fill({
-      x: 1, y: 0, w: MINIGAME_W - 2, h: MINIGAME_H,
-    });
-    let { invaders, invader_bullets, player_bullets, player, w, h } = this;
+    let { invaders, player, w, h, xoffs } = this;
 
     // terminal.print({
     //   x: round(player),
@@ -799,7 +823,7 @@ class InvadersState {
     // });
     let px = round(player);
     terminal.print({
-      x: max(0, px - 2),
+      x: xoffs + max(0, px - 2),
       y: h - 1,
       fg: 9,
       text: `${px > 1 ? '\x11' : ''}═╩═${px < w - 2 ? '\x10' : ''}`,
@@ -808,23 +832,12 @@ class InvadersState {
     for (let ii = 0; ii < invaders.length; ++ii) {
       let invader = invaders[ii];
       terminal.print({
-        x: invader[0],
+        x: xoffs + invader[0],
         y: invader[1],
         fg: invader[2],
         text: invader[3],
       });
     }
-    [invader_bullets, player_bullets].forEach((list, bullet_idx) => {
-      for (let ii = 0; ii < list.length; ++ii) {
-        let b = list[ii];
-        terminal.print({
-          x: b[0],
-          y: b[1],
-          fg: bullet_idx ? 10 : 7,
-          text: '|',
-        });
-      }
-    });
   }
 }
 
@@ -843,7 +856,9 @@ class KaboomState {
   enemy_target = 0;
   bullets!: JSVec2[];
   board!: number[][];
-  constructor() {
+  xoffs: number;
+  constructor(xoffs: number, state: GameState) {
+    this.xoffs = xoffs;
     this.newGame();
   }
   newGame(): void {
@@ -941,9 +956,6 @@ class KaboomState {
   }
   render(): void {
     terminal.normal();
-    terminal.fill({
-      x: 1, y: 0, w: MINIGAME_W - 2, h: MINIGAME_H,
-    });
     let { bullets, player, player_width, enemy, py, board, w, h } = this;
 
     let px = round(player - (player_width - 1) / 2);
@@ -1002,11 +1014,71 @@ type GameData = {
 class GameState {
   mode: 'explore' | 'combat' = 'explore';
   data: GameData = { a: 0, b: 0 };
-  breakout = new BreakoutState();
-  dodge = new DodgeState();
-  blocks = new BlocksState();
-  invaders = new InvadersState();
-  kaboom = new KaboomState();
+  board!: Board;
+  invaders!: InvadersState;
+  breakout!: BreakoutState;
+  blocks!: BlocksState;
+  kaboom!: KaboomState;
+  bullets!: Bullet[];
+  constructor() {
+    this.initBoard();
+  }
+  initBoard(): void {
+    this.board = [];
+    let board = this.board;
+    let w = (MINIGAME_W + 1) * 4 + 1;
+    let c1 = MINIGAME_W + 1;
+    let c2 = (MINIGAME_W + 1) * 2;
+    let c3 = (MINIGAME_W + 1) * 3;
+    for (let yy = 0; yy < MINIGAME_H; ++yy) {
+      let row: number[] = [];
+      board.push(row);
+      for (let xx = 0; xx < w; ++xx) {
+        let v = 0;
+        if (xx === 0 || xx === c3 || xx === w - 1) {
+          v = BORDER | INDESTRUCTIBLE | BORDER_BLOCK;
+        } else if (xx === c1 || xx === c2) {
+          v = BORDER;
+          v |= (yy === 0 || yy > MINIGAME_H*0.667) ?
+            INDESTRUCTIBLE :
+            (3<<HP_SHIFT);
+          v |= BORDER_BLOCK;
+        }
+        row.push(v);
+      }
+    }
+    this.bullets = [];
+    this.invaders = new InvadersState(0, this);
+    this.breakout = new BreakoutState(MINIGAME_W + 1, this);
+    this.blocks = new BlocksState((MINIGAME_W + 1) * 2, this);
+    this.kaboom = new KaboomState((MINIGAME_W + 1) * 3, this);
+  }
+
+  update(dt: number): void {
+    this.updateBullets(dt);
+  }
+  updateBullets(dt: number): void {
+    let { bullets } = this;
+    for (let ii = bullets.length - 1; ii >= 0; --ii) {
+      let b = bullets[ii];
+      b.ycounter -= dt;
+      if (b.ycounter <= 0) {
+        b.ycounter += b.ytime;
+        b.y += b.ydir;
+        if (b.y < 0 || b.y >= MINIGAME_H) {
+          ridx(bullets, ii);
+        }
+      }
+    }
+  }
+  clearBullets(type: BulletType): void {
+    let { bullets } = this;
+    for (let ii = bullets.length - 1; ii >= 0; --ii) {
+      if (bullets[ii].type === type) {
+        ridx(bullets, ii);
+      }
+    }
+  }
 }
 let game_state: GameState;
 export function gameState(): GameState {
@@ -1025,60 +1097,64 @@ export function setScore(): void {
 }
 
 let view_x = 1;
+let view_board = { x: view_x, y: 1, w: MINIGAME_W * 4 + 3, h: MINIGAME_H };
 let view_invaders = { x: view_x, y: 1, w: MINIGAME_W, h: MINIGAME_H };
-view_x += MINIGAME_W - 1;
+view_x += MINIGAME_W + 1;
 let view_breakout = { x: view_x, y: 1, w: MINIGAME_W, h: MINIGAME_H };
-view_x += MINIGAME_W - 1;
+view_x += MINIGAME_W + 1;
 let view_blocks = { x: view_x, y: 1, w: MINIGAME_W, h: MINIGAME_H };
-view_x += MINIGAME_W - 1;
+view_x += MINIGAME_W + 1;
 let view_kaboom = { x: view_x, y: 1, w: MINIGAME_W, h: MINIGAME_H };
-view_x += MINIGAME_W - 1;
+view_x += MINIGAME_W + 1;
 function statePlay(dt: number): void {
   terminal.auto_scroll = false;
   terminal.color(11, 0);
   terminal.cells({
-    x: view_breakout.x, y: view_breakout.y - 1, ws: [MINIGAME_W - 2], hs: [MINIGAME_H], charset: 1,
+    x: view_breakout.x, y: view_breakout.y - 1, ws: [MINIGAME_W], hs: [MINIGAME_H], charset: 1,
     header: ' BREAKOUT ',
   });
   terminal.cells({
-    x: view_kaboom.x, y: view_kaboom.y - 1, ws: [MINIGAME_W - 2], hs: [MINIGAME_H], charset: 1,
+    x: view_kaboom.x, y: view_kaboom.y - 1, ws: [MINIGAME_W], hs: [MINIGAME_H], charset: 1,
     header: ' KABOOM ',
   });
   terminal.cells({
-    x: view_blocks.x, y: view_blocks.y - 1, ws: [MINIGAME_W - 2], hs: [MINIGAME_H], charset: 1,
+    x: view_blocks.x, y: view_blocks.y - 1, ws: [MINIGAME_W], hs: [MINIGAME_H], charset: 1,
     header: ' BLOCKS ',
   });
   terminal.cells({
-    x: view_invaders.x, y: view_invaders.y - 1, ws: [MINIGAME_W - 2], hs: [MINIGAME_H], charset: 1,
+    x: view_invaders.x, y: view_invaders.y - 1, ws: [MINIGAME_W], hs: [MINIGAME_H], charset: 1,
     header: ' INVADERS ',
   });
 
-  terminal.subViewPush(view_breakout);
+  terminal.subViewPush(view_board);
+  game_state.update(dt);
+  gameStateRenderEarly(game_state);
+  terminal.subViewPop();
+
+  terminal.subViewPush(view_board);
+  game_state.invaders.update(dt);
+  game_state.invaders.render();
+  terminal.subViewPop();
+
+  terminal.subViewPush(view_board);
   game_state.breakout.update(dt);
   game_state.breakout.render();
   terminal.subViewPop();
 
-  if (0) {
-    terminal.subViewPush(view_kaboom);
-    game_state.dodge.update(dt);
-    game_state.dodge.render();
-    terminal.subViewPop();
-  } else {
-    terminal.subViewPush(view_kaboom);
-    game_state.kaboom.update(dt);
-    game_state.kaboom.render();
-    terminal.subViewPop();
-  }
+  terminal.subViewPush(view_kaboom);
+  game_state.kaboom.update(dt);
+  game_state.kaboom.render();
+  terminal.subViewPop();
 
   terminal.subViewPush(view_blocks);
   game_state.blocks.update(dt);
   game_state.blocks.render();
   terminal.subViewPop();
 
-  terminal.subViewPush(view_invaders);
-  game_state.invaders.update(dt);
-  game_state.invaders.render();
+  terminal.subViewPush(view_board);
+  gameStateRenderLate(game_state);
   terminal.subViewPop();
+
 
   terminal.render();
 }
