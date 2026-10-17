@@ -4,7 +4,7 @@ const local_storage = require('glov/client/local_storage');
 local_storage.setStoragePrefix('ld60'); // Before requiring anything else that might load from this
 
 import assert from 'assert';
-import { actionDown } from 'glov/client/actions';
+import { actionDown, actionEdge } from 'glov/client/actions';
 import { MODE_DEVELOPMENT, platformParameterGet } from 'glov/client/client_config';
 import {
   debugDefineIsSet,
@@ -305,7 +305,172 @@ class DodgeState {
         });
       }
     }
+  }
+}
 
+const TARGET = 100;
+const MATCH_LEN = 2;
+function matches(color: number, block: number): boolean {
+  return block === color || block === color + TARGET;
+}
+class BlocksState {
+  w = floor(MINIGAME_W/2);
+  h = MINIGAME_H;
+  num_blocks = 4;
+  block!: number;
+  pos!: JSVec2;
+  board!: number[][];
+  constructor() {
+    this.newBoard();
+  }
+  newPiece(): void {
+    let { w, h, board } = this;
+    // check for clears
+    let any_targets = false;
+    for (let yy = 0; yy < h; ++yy) {
+      for (let xx = 0; xx < w; ++xx) {
+        let color = board[yy][xx];
+        if (!color) {
+          continue;
+        }
+        if (color > TARGET) {
+          any_targets = true;
+          color -= TARGET;
+        }
+        if (xx <= w - MATCH_LEN) {
+          let match_len = 1;
+          while (xx + match_len < w && matches(color, board[yy][xx + match_len])) {
+            ++match_len;
+          }
+          if (match_len >= MATCH_LEN) {
+            for (let ii = 0; ii < match_len; ++ii) {
+              board[yy][xx + ii] = 0;
+            }
+          }
+        }
+        if (yy <= h - MATCH_LEN) {
+          let match_len = 1;
+          while (yy + match_len < h && matches(color, board[yy + match_len][xx])) {
+            ++match_len;
+          }
+          if (match_len >= MATCH_LEN) {
+            for (let ii = 0; ii < match_len; ++ii) {
+              board[yy + ii][xx] = 0;
+            }
+          }
+        }
+      }
+    }
+
+    if (!any_targets) {
+      // win
+      return this.newBoard();
+    }
+
+    this.block = randInt(this.num_blocks) + 1;
+    this.pos = [this.w/2, 0];
+    let px = round(this.pos[0]);
+    let py = floor(this.pos[1]);
+    if (board[py][px]) {
+      // lose
+      this.newBoard();
+    }
+  }
+  newBoard(): void {
+    let { w, h, num_blocks } = this;
+    let board: number[][] = [];
+    for (let yy = 0; yy < h; ++yy) {
+      let row: number[] = [];
+      board.push(row);
+      for (let xx = 0; xx < w; ++xx) {
+        row.push(0);
+      }
+    }
+    let num_targets = 8;
+    for (let ii = 0; ii < num_targets; ++ii) {
+      while (true) {
+        let x = randInt(w);
+        let y = 4 + randInt(h - 4);
+        if (board[y][x]) {
+          continue;
+        }
+        board[y][x] = TARGET + randInt(num_blocks) + 1;
+        break;
+      }
+    }
+    this.board = board;
+    this.newPiece();
+  }
+  update(dt: number): void {
+    let { pos, w, h, board } = this;
+    let pspd = dt * 0.005;
+    let old_px = round(pos[0]);
+    let old_py = floor(pos[1]);
+    assert(!board[old_py][old_px]);
+    if (actionEdge('left')) {
+      pos[0] = round(pos[0]) - 0.51;
+    }
+    if (actionDown('left')) {
+      pos[0] -= pspd;
+    }
+    if (actionEdge('right')) {
+      pos[0] = round(pos[0]) + 0.51;
+    }
+    if (actionDown('right')) {
+      pos[0] += pspd;
+    }
+    pos[0] = clamp(pos[0], 0, w - 1);
+    let px = round(pos[0]);
+    if (board[old_py][px]) {
+      // user pushed into something horizontally
+      px = old_px;
+      pos[0] = old_px;
+    }
+    pos[1] += dt * 0.001;
+    if (actionEdge('down')) {
+      pos[1] = old_py + 1;
+    }
+
+    let py = floor(pos[1]);
+    if (py >= h) {
+      board[old_py][old_px] = this.block;
+      this.newPiece();
+    } else if (board[py][px]) {
+      if (py !== old_py) {
+        board[old_py][old_px] = this.block;
+        this.newPiece();
+      } else {
+        assert(false); // should have been blocked above
+      }
+    }
+  }
+  render(): void {
+    terminal.color(7, 0);
+    terminal.clear();
+    let { pos, block, board, w, h } = this;
+
+    terminal.print({
+      x: round(pos[0]) * 2,
+      y: floor(pos[1]),
+      fg: [12, 9, 14, 11][block - 1],
+      text: '██',
+    });
+
+    for (let yy = 0; yy < h; ++yy) {
+      let row = board[yy];
+      for (let xx = 0; xx < w; ++xx) {
+        let cell = row[xx];
+        if (cell) {
+          let color = cell > TARGET ? cell - TARGET : cell;
+          terminal.print({
+            x: xx * 2,
+            y: yy,
+            fg: [12, 9, 14, 11][color - 1],
+            text: cell > TARGET ? '▓▓' : '██',
+          });
+        }
+      }
+    }
   }
 }
 
@@ -318,6 +483,7 @@ class GameState {
   data: GameData = { a: 0, b: 0 };
   breakout = new BreakoutState();
   dodge = new DodgeState();
+  blocks = new BlocksState();
 }
 let game_state: GameState;
 export function gameState(): GameState {
@@ -335,6 +501,7 @@ export function setScore(): void {
   score_system.setScore(0, score);
 }
 
+let view_blocks = { x: 30 - MINIGAME_W - 1, y: 1, w: MINIGAME_W, h: MINIGAME_H };
 let view_breakout = { x: 30, y: 1, w: MINIGAME_W, h: MINIGAME_H };
 let view_dodge = { x: 30 + MINIGAME_W + 1, y: 1, w: MINIGAME_W, h: MINIGAME_H };
 function statePlay(dt: number): void {
@@ -357,6 +524,16 @@ function statePlay(dt: number): void {
   terminal.subViewPush(view_dodge);
   game_state.dodge.update(dt);
   game_state.dodge.render();
+  terminal.subViewPop();
+
+  terminal.color(3, 0);
+  terminal.cells({
+    x: view_blocks.x - 1, y: view_blocks.y - 1, ws: [MINIGAME_W], hs: [MINIGAME_H], charset: 1,
+    header: ' BLOCKS ',
+  });
+  terminal.subViewPush(view_blocks);
+  game_state.blocks.update(dt);
+  game_state.blocks.render();
   terminal.subViewPop();
 
   terminal.render();
