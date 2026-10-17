@@ -88,45 +88,65 @@ const BREAKOUT_BLOCK_W = 4;
 
 class BreakoutState {
   board: number[][];
-  w: number;
-  h: number;
+  w = MINIGAME_W;
+  h = MINIGAME_H;
   ball_pos!: JSVec2;
   ball_dir!: JSVec2;
   player: number;
   player_width = 5;
-  block: string;
+  block_xoffs = floor((this.w % BREAKOUT_BLOCK_W) / 2);
   newBall(): void {
-    this.ball_pos = [this.w / 2, this.board.length + 1];
-    this.ball_dir = [0, 1];
+    this.ball_pos = [round(this.player), this.h - 2];
+    this.ball_dir = [0, -1];
   }
   constructor() {
     this.board = [];
     let board = this.board;
-    for (let yy = 0; yy < MINIGAME_H/2; ++yy) {
-      let row: number[] = board[yy] = [];
-      for (let xx = 0; xx < floor(MINIGAME_W/BREAKOUT_BLOCK_W); ++xx) {
-        row.push(1 + randInt(BLOCK_COLORS.length));
+    let { block_xoffs, w, h } = this;
+    let blocks_start = 1;
+    let blocks_end = floor(h / 2) - 1;
+    while (board.length < blocks_start) {
+      let row: number[] = [];
+      for (let ii = 0; ii < w; ++ii) {
+        row.push(0);
       }
+      board.push(row);
     }
-    this.w = board[0].length * BREAKOUT_BLOCK_W;
-    this.h = MINIGAME_H;
-    this.newBall();
+    while (board.length < blocks_end) {
+      let row: number[] = [];
+      while (row.length < block_xoffs) {
+        row.push(0);
+      }
+      while (row.length + BREAKOUT_BLOCK_W < w) {
+        let color = 1 + randInt(BLOCK_COLORS.length);
+        for (let ii = 0; ii < BREAKOUT_BLOCK_W; ++ii) {
+          row.push(color);
+        }
+      }
+      while (row.length < w) {
+        row.push(0);
+      }
+      board.push(row);
+    }
+    while (board.length < h) {
+      let row: number[] = [];
+      for (let ii = 0; ii < w; ++ii) {
+        row.push(0);
+      }
+      board.push(row);
+    }
     this.player = this.w / 2;
-    let block = [];
-    for (let ii = 0; ii < BREAKOUT_BLOCK_W; ++ii) {
-      block.push('█');
-    }
-    this.block = block.join('');
+    this.newBall();
   }
 
   update(dt: number): void {
-    let { ball_pos, ball_dir, w, h, player_width, board } = this;
+    let { ball_pos, ball_dir, w, h, player_width, board, block_xoffs } = this;
     let spd = dt * 0.01;
     if (actionDown('left')) {
-      this.player = max(this.player_width / 2, this.player - spd);
+      this.player = max((this.player_width - 1) / 2, this.player - spd);
     }
     if (actionDown('right')) {
-      this.player = min(this.w - this.player_width / 2, this.player + spd);
+      this.player = min(this.w - (this.player_width - 1) / 2 - 1, this.player + spd);
     }
     let old_bx = round(ball_pos[0]);
     let old_by = round(ball_pos[1]);
@@ -163,9 +183,11 @@ class BreakoutState {
       } else if (by === h) {
         this.newBall();
       } else {
-        let blockx = floor(bx / BREAKOUT_BLOCK_W);
-        if (board[by]?.[blockx]) {
-          board[by][blockx] = 0;
+        if (board[by]?.[bx]) {
+          let blockx = floor((bx - block_xoffs) / BREAKOUT_BLOCK_W) * BREAKOUT_BLOCK_W + block_xoffs;
+          for (let ii = 0; ii < BREAKOUT_BLOCK_W; ++ii) {
+            board[by][blockx + ii] = 0;
+          }
           if (bx !== old_bx) {
             ball_dir[0] *= -1;
             ball_pos[0] += 2 * ((min(bx, old_bx) + 0.5) - ball_pos[0]);
@@ -182,16 +204,16 @@ class BreakoutState {
   render(): void {
     terminal.color(7, 0);
     terminal.clear();
-    let { h, board, block, ball_pos, player, player_width } = this;
+    let { h, board, ball_pos, player, player_width } = this;
     for (let yy = 0; yy < board.length; ++yy) {
       let row = board[yy];
       for (let xx = 0; xx < row.length; ++xx) {
         if (row[xx]) {
           terminal.print({
-            x: xx * BREAKOUT_BLOCK_W,
+            x: xx,
             y: yy,
             fg: BLOCK_COLORS[row[xx] - 1],
-            text: block,
+            text: '█',
           });
         }
       }
@@ -207,13 +229,13 @@ class BreakoutState {
     terminal.print({
       x: round(ball_pos[0]),
       y: by,
-      fg: 9,
+      fg: 10,
       // text: fpart < -0.1667 ? '▀' : fpart > 0.1667 ? '▄' : '■',
       text: fpart < 0 ? '▀' : '▄',
     });
 
     terminal.print({
-      x: round(player - player_width / 2),
+      x: round(player) - (player_width - 1) / 2,
       y: h - 1,
       fg: 12,
       text: player_str.join(''),
@@ -322,17 +344,24 @@ class BlocksState {
   num_blocks = 4;
   block!: number;
   pos!: JSVec2;
+  logic_board!: number[][];
   board!: number[][];
   constructor() {
     this.newBoard();
   }
+  setBoard(x: number, y: number, v: number): void {
+    let { logic_board, board } = this;
+    logic_board[y][x] = v;
+    board[y][x*2] = v;
+    board[y][x*2 + 1] = v;
+  }
   newPiece(): void {
-    let { w, h, board } = this;
+    let { w, h, logic_board } = this;
     // check for clears
     let any_targets = false;
     for (let yy = 0; yy < h; ++yy) {
       for (let xx = 0; xx < w; ++xx) {
-        let color = board[yy][xx];
+        let color = logic_board[yy][xx];
         if (!color) {
           continue;
         }
@@ -342,23 +371,23 @@ class BlocksState {
         }
         if (xx <= w - MATCH_LEN) {
           let match_len = 1;
-          while (xx + match_len < w && matches(color, board[yy][xx + match_len])) {
+          while (xx + match_len < w && matches(color, logic_board[yy][xx + match_len])) {
             ++match_len;
           }
           if (match_len >= MATCH_LEN) {
             for (let ii = 0; ii < match_len; ++ii) {
-              board[yy][xx + ii] = 0;
+              this.setBoard(xx + ii, yy, 0);
             }
           }
         }
         if (yy <= h - MATCH_LEN) {
           let match_len = 1;
-          while (yy + match_len < h && matches(color, board[yy + match_len][xx])) {
+          while (yy + match_len < h && matches(color, logic_board[yy + match_len][xx])) {
             ++match_len;
           }
           if (match_len >= MATCH_LEN) {
             for (let ii = 0; ii < match_len; ++ii) {
-              board[yy + ii][xx] = 0;
+              this.setBoard(xx, yy + ii, 0);
             }
           }
         }
@@ -374,42 +403,50 @@ class BlocksState {
     this.pos = [this.w/2, 0];
     let px = round(this.pos[0]);
     let py = floor(this.pos[1]);
-    if (board[py][px]) {
+    if (logic_board[py][px]) {
       // lose
       this.newBoard();
     }
   }
   newBoard(): void {
     let { w, h, num_blocks } = this;
+    let logic_board: number[][] = [];
     let board: number[][] = [];
     for (let yy = 0; yy < h; ++yy) {
       let row: number[] = [];
-      board.push(row);
+      logic_board.push(row);
       for (let xx = 0; xx < w; ++xx) {
         row.push(0);
       }
+      row = [];
+      for (let xx = 0; xx < MINIGAME_W; ++xx) {
+        row.push(0);
+      }
+      board.push(row);
     }
+    this.logic_board = logic_board;
+    this.board = board;
     let num_targets = 8;
     for (let ii = 0; ii < num_targets; ++ii) {
       while (true) {
         let x = randInt(w);
         let y = 4 + randInt(h - 4);
-        if (board[y][x]) {
+        if (logic_board[y][x]) {
           continue;
         }
-        board[y][x] = TARGET + randInt(num_blocks) + 1;
+        this.setBoard(x, y, TARGET + randInt(num_blocks) + 1);
         break;
       }
     }
-    this.board = board;
     this.newPiece();
   }
+  down_time = 0;
   update(dt: number): void {
-    let { pos, w, h, board } = this;
-    let pspd = dt * 0.005;
+    let { pos, w, h, logic_board } = this;
+    let pspd = dt / 140;
     let old_px = round(pos[0]);
     let old_py = floor(pos[1]);
-    assert(!board[old_py][old_px]);
+    assert(!logic_board[old_py][old_px]);
     if (actionEdge('left', { peek: true })) {
       pos[0] = round(pos[0]) - 0.51;
     }
@@ -424,23 +461,32 @@ class BlocksState {
     }
     pos[0] = clamp(pos[0], 0, w - 1);
     let px = round(pos[0]);
-    if (board[old_py][px]) {
+    if (logic_board[old_py][px]) {
       // user pushed into something horizontally
       px = old_px;
       pos[0] = old_px;
     }
-    pos[1] += dt * 0.001;
+    pos[1] += dt * 0.002;
     if (actionEdge('down', { peek: true })) {
       pos[1] = old_py + 1;
+    }
+    if (actionDown('down')) {
+      this.down_time += dt;
+      if (this.down_time > 140) {
+        pos[1] = old_py + 1;
+        this.down_time -= 140;
+      }
+    } else {
+      this.down_time = 0;
     }
 
     let py = floor(pos[1]);
     if (py >= h) {
-      board[old_py][old_px] = this.block;
+      this.setBoard(old_px, old_py, this.block);
       this.newPiece();
-    } else if (board[py][px]) {
+    } else if (logic_board[py][px]) {
       if (py !== old_py) {
-        board[old_py][old_px] = this.block;
+        this.setBoard(old_px, old_py, this.block);
         this.newPiece();
       } else {
         assert(false); // should have been blocked above
@@ -450,7 +496,7 @@ class BlocksState {
   render(): void {
     terminal.color(7, 0);
     terminal.clear();
-    let { pos, block, board, w, h } = this;
+    let { pos, block, board, h } = this;
     let fg = BLOCK_COLORS[block - 1];
     terminal.print({
       x: round(pos[0]) * 2,
@@ -463,15 +509,15 @@ class BlocksState {
     terminal.color(7, 0);
     for (let yy = 0; yy < h; ++yy) {
       let row = board[yy];
-      for (let xx = 0; xx < w; ++xx) {
+      for (let xx = 0; xx < row.length; ++xx) {
         let cell = row[xx];
         if (cell) {
           let color = cell > TARGET ? cell - TARGET : cell;
           terminal.print({
-            x: xx * 2,
+            x: xx,
             y: yy,
             fg: BLOCK_COLORS[color - 1],
-            text: cell > TARGET ? '▒▒' : '██',
+            text: cell > TARGET ? '▒' : '█',
           });
         }
       }
