@@ -18,7 +18,8 @@ import { terminalCreate } from 'glov/client/terminal';
 import { terminalSettingsInit, terminalSettingsShow } from 'glov/client/terminal_settings';
 import { scaleSizes, setFontHeight } from 'glov/client/ui';
 import { ansi } from 'glov/common/ansi';
-import { clamp } from 'glov/common/util';
+import { Rec } from 'glov/common/types';
+import { clamp, ridx } from 'glov/common/util';
 import { JSVec2, v2iNormalize, v2lerp } from 'glov/common/vmath';
 import { SOUND_DATA } from './sound_data';
 
@@ -407,13 +408,13 @@ class BlocksState {
     let old_px = round(pos[0]);
     let old_py = floor(pos[1]);
     assert(!board[old_py][old_px]);
-    if (actionEdge('left')) {
+    if (actionEdge('left', { peek: true })) {
       pos[0] = round(pos[0]) - 0.51;
     }
     if (actionDown('left')) {
       pos[0] -= pspd;
     }
-    if (actionEdge('right')) {
+    if (actionEdge('right', { peek: true })) {
       pos[0] = round(pos[0]) + 0.51;
     }
     if (actionDown('right')) {
@@ -427,7 +428,7 @@ class BlocksState {
       pos[0] = old_px;
     }
     pos[1] += dt * 0.001;
-    if (actionEdge('down')) {
+    if (actionEdge('down', { peek: true })) {
       pos[1] = old_py + 1;
     }
 
@@ -474,6 +475,252 @@ class BlocksState {
   }
 }
 
+const INVADER_PAD = 3;
+const NUM_INVADERS = 20;
+const INVADER_MOVE_TIME = 1000;
+const INVADER_SHOOT_TIME = INVADER_MOVE_TIME * 3;
+const INVADER_BULLET_TIME = 250/2;
+const PLAYER_SHOOT_TIME = INVADER_MOVE_TIME;
+class InvadersState {
+  invaders: [number, number, number, string][] = [];
+  invader_bullets: [number, number][] = [];
+  player_bullets: [number, number][] = [];
+  w = MINIGAME_W;
+  h = MINIGAME_H;
+  constructor() {
+    this.newBoard();
+  }
+  move_counter = 0;
+  shoot_counter = 0;
+  player_shoot_counter = 0;
+  bullet_counter = 0;
+  shoot_idx = 0;
+  bullet_idx = 0;
+  move_dir = 1;
+  player = 0;
+  newBoard(): void {
+    this.player = this.w/2;
+    this.invader_bullets = [];
+    this.player_bullets = [];
+    this.invaders = [];
+    let { invaders, w } = this;
+    let xx = INVADER_PAD;
+    let yy = 0;
+    let opts = ['\x0f', '\x15'];
+    for (let ii = 0; ii < NUM_INVADERS; ++ii) {
+      invaders.push([xx, yy, [4, 5, 12, 13][randInt(4)], opts[ii % opts.length]]);
+      xx += 2;
+      if (xx >= w - INVADER_PAD) {
+        xx = INVADER_PAD;
+        yy++;
+      }
+    }
+    this.move_counter = INVADER_MOVE_TIME;
+    this.move_dir = 1;
+    this.shoot_counter = INVADER_SHOOT_TIME;
+    this.shoot_idx = 0;
+    this.bullet_counter = INVADER_BULLET_TIME;
+    this.bullet_idx = 0;
+    this.player_shoot_counter = PLAYER_SHOOT_TIME / 2;
+  }
+  died(): void {
+    this.newBoard();
+  }
+  won(): void {
+    this.newBoard();
+  }
+  updateInvaders(dt: number): void {
+    this.move_counter -= dt;
+    if (this.move_counter > 0) {
+      return;
+    }
+    this.move_counter += INVADER_MOVE_TIME;
+    let { invaders, move_dir, w, h } = this;
+    let bounce = false;
+    for (let ii = 0; ii < invaders.length; ++ii) {
+      let invader = invaders[ii];
+      let newx = invader[0] + move_dir;
+      if (newx < 0 || newx >= w) {
+        bounce = true;
+      }
+    }
+    let dy = 0;
+    let dx = move_dir;
+    if (bounce) {
+      this.move_dir *= -1;
+      dx = 0;
+      dy = 1;
+    }
+    let dead = false;
+    for (let ii = 0; ii < invaders.length; ++ii) {
+      let invader = invaders[ii];
+      invader[0] += dx;
+      invader[1] += dy;
+      if (invader[1] === h) {
+        dead = true;
+      }
+    }
+    if (dead) {
+      this.newBoard();
+    }
+  }
+  fireBullets(dt: number): void {
+    this.shoot_counter -= dt;
+    if (this.shoot_counter > 0) {
+      return;
+    }
+    this.shoot_counter += INVADER_SHOOT_TIME;
+    let { invaders, shoot_idx, invader_bullets, h } = this;
+    for (let ii = 0; ii < invaders.length; ++ii) {
+      let invader = invaders[ii];
+      if ((ii + shoot_idx) % 4) {
+        continue;
+      }
+      let x = invader[0];
+      let y = invader[1] + 1;
+      let open = y < h;
+      for (let jj = 0; jj < invaders.length; ++jj) {
+        if (invaders[jj][0] === x && invaders[jj][1] === y) {
+          open = false;
+          break;
+        }
+      }
+      if (open) {
+        invader_bullets.push([x, y]);
+      }
+    }
+    this.shoot_idx++;
+  }
+  firePlayerBullets(dt: number): void {
+    this.player_shoot_counter -= dt;
+    if (this.player_shoot_counter > 0) {
+      return;
+    }
+    this.player_shoot_counter += PLAYER_SHOOT_TIME;
+    let { player_bullets, h, player } = this;
+    player_bullets.push([round(player), h - 2]);
+  }
+  updateBullets(dt: number): void {
+    this.bullet_counter -= dt;
+    if (this.bullet_counter > 0) {
+      return;
+    }
+    this.bullet_counter += INVADER_BULLET_TIME;
+    let { invader_bullets, player_bullets, h } = this;
+    this.bullet_idx = (this.bullet_idx + 1) % 2;
+    let list = this.bullet_idx ? player_bullets : invader_bullets;
+    for (let ii = list.length - 1; ii >= 0; --ii) {
+      let b = list[ii];
+      if (this.bullet_idx) {
+        b[1]--;
+        if (b[1] < 0) {
+          ridx(list, ii);
+        }
+      } else {
+        b[1]++;
+        if (b[1] === h) {
+          ridx(list, ii);
+        }
+      }
+    }
+  }
+  update(dt: number): void {
+    let { w } = this;
+    let hspd = dt * 0.01 * 0.7;
+    if (actionDown('left')) {
+      this.player = max(1, this.player - hspd);
+    }
+    if (actionDown('right')) {
+      this.player = min(w - 2, this.player + hspd);
+    }
+
+    this.updateInvaders(dt);
+    this.updateBullets(dt);
+    this.fireBullets(dt);
+    this.firePlayerBullets(dt);
+
+    let px = round(this.player);
+    let py = this.h - 1;
+    let player_pos = px + py * w;
+    let { invaders, invader_bullets, player_bullets } = this;
+    let player_bullet_pos: Rec<number, JSVec2> = {};
+    for (let ii = 0; ii < player_bullets.length; ++ii) {
+      let pos = player_bullets[ii];
+      player_bullet_pos[pos[0] + pos[1] * w] = pos;
+    }
+    let hit = false;
+    [invaders, invader_bullets].forEach((list) => {
+      let to_remove: number[] = [];
+      list.forEach((item, idx) => {
+        let posidx = item[0] + item[1] * w;
+        if (
+          posidx === player_pos ||
+          posidx === player_pos + 1 ||
+          posidx === player_pos - 1 ||
+          posidx === player_pos - w
+        ) {
+          hit = true;
+        }
+        let player_bullet = player_bullet_pos[posidx];
+        if (player_bullet) {
+          to_remove.push(idx);
+          let player_idx = player_bullets.indexOf(player_bullet);
+          assert(player_idx !== -1);
+          player_bullets.splice(player_idx, 1);
+          delete player_bullet_pos[posidx];
+        }
+      });
+      for (let ii = to_remove.length - 1; ii >= 0; --ii) {
+        list.splice(to_remove[ii], 1);
+      }
+    });
+    if (hit) {
+      this.died();
+    } else if (!invaders.length) {
+      this.won();
+    }
+  }
+  render(): void {
+    terminal.color(7, 0);
+    terminal.clear();
+    let { invaders, invader_bullets, player_bullets, player, h } = this;
+
+    terminal.print({
+      x: round(player),
+      y: h - 2,
+      fg: 12,
+      text: '╥',
+    });
+    terminal.print({
+      x: round(player) - 1,
+      y: h - 1,
+      fg: 12,
+      text: '▄█▄',
+    });
+
+    for (let ii = 0; ii < invaders.length; ++ii) {
+      let invader = invaders[ii];
+      terminal.print({
+        x: invader[0],
+        y: invader[1],
+        fg: invader[2],
+        text: invader[3],
+      });
+    }
+    [invader_bullets, player_bullets].forEach((list, bullet_idx) => {
+      for (let ii = 0; ii < list.length; ++ii) {
+        let b = list[ii];
+        terminal.print({
+          x: b[0],
+          y: b[1],
+          fg: bullet_idx ? 10 : 7,
+          text: '|',
+        });
+      }
+    });
+  }
+}
+
 type GameData = {
   a: number;
   b: number;
@@ -484,6 +731,7 @@ class GameState {
   breakout = new BreakoutState();
   dodge = new DodgeState();
   blocks = new BlocksState();
+  invaders = new InvadersState();
 }
 let game_state: GameState;
 export function gameState(): GameState {
@@ -501,9 +749,15 @@ export function setScore(): void {
   score_system.setScore(0, score);
 }
 
-let view_blocks = { x: 30 - MINIGAME_W - 1, y: 1, w: MINIGAME_W, h: MINIGAME_H };
-let view_breakout = { x: 30, y: 1, w: MINIGAME_W, h: MINIGAME_H };
-let view_dodge = { x: 30 + MINIGAME_W + 1, y: 1, w: MINIGAME_W, h: MINIGAME_H };
+let view_x = 2;
+let view_invaders = { x: view_x, y: 1, w: MINIGAME_W, h: MINIGAME_H };
+view_x += MINIGAME_W + 1;
+let view_breakout = { x: view_x, y: 1, w: MINIGAME_W, h: MINIGAME_H };
+view_x += MINIGAME_W + 1;
+let view_blocks = { x: view_x, y: 1, w: MINIGAME_W, h: MINIGAME_H };
+view_x += MINIGAME_W + 1;
+let view_dodge = { x: view_x, y: 1, w: MINIGAME_W, h: MINIGAME_H };
+view_x += MINIGAME_W + 1;
 function statePlay(dt: number): void {
   terminal.auto_scroll = false;
   terminal.color(3, 0);
@@ -534,6 +788,16 @@ function statePlay(dt: number): void {
   terminal.subViewPush(view_blocks);
   game_state.blocks.update(dt);
   game_state.blocks.render();
+  terminal.subViewPop();
+
+  terminal.color(3, 0);
+  terminal.cells({
+    x: view_invaders.x - 1, y: view_invaders.y - 1, ws: [MINIGAME_W], hs: [MINIGAME_H], charset: 1,
+    header: ' INVADERS ',
+  });
+  terminal.subViewPush(view_invaders);
+  game_state.invaders.update(dt);
+  game_state.invaders.render();
   terminal.subViewPop();
 
   terminal.render();
