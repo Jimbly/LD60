@@ -132,10 +132,11 @@ function gameStateRenderEarly(state: GameState): void {
     for (let xx = 0; xx < row.length; ++xx) {
       let v = row[xx];
       if (v) {
-        let ch = (v & INDESTRUCTIBLE) ? '▓' : '█';
+        let ch = (v & INDESTRUCTIBLE) ? '▓' : (v & TARGET) ? '▒' : '█';
         let hp = (v & HP) >> HP_SHIFT;
         let fg = BLOCK_COLORS[v & COLORBITS];
-        let bg = BLOCK_COLORS[v & COLORBITS] - 8;
+        let bg = (v & TARGET) ? 0 :
+          BLOCK_COLORS[v & COLORBITS] - 8;
         if (v & BORDER) {
           bg = 0;
           ch = ((v & INDESTRUCTIBLE) || hp === 3) ? '║' : '│';
@@ -198,7 +199,7 @@ class BreakoutState {
   newBall(): void {
     this.state.balls.push({
       pos: [round(this.player) + this.xoffs, this.h - 2],
-      dir: [MODE_DEVELOPMENT ? -1 : 0, -1],
+      dir: [MODE_DEVELOPMENT ? 1 : 0, -1],
     });
   }
   xoffs: number;
@@ -275,7 +276,8 @@ class BreakoutState {
             let vec = [sin(PI/2 * impact), -cos(PI/2 * impact)] as const;
             v2lerp(ball_dir, abs(impact) * 0.75, ball_dir, vec);
           }
-        } else if (by === h) {
+        }
+        if (by === h) {
           ridx(balls, ball_idx);
           this.newBall();
         } else {
@@ -432,96 +434,90 @@ class BlocksState {
   num_blocks = 4;
   block!: number;
   pos!: JSVec2;
-  logic_board!: number[][];
-  board!: number[][];
+  board: number[][];
   xoffs: number;
+  state: GameState;
   constructor(xoffs: number, state: GameState) {
-    this.xoffs = xoffs;
+    this.xoffs = xoffs + 1;
+    this.state = state;
+    this.board = state.board;
     this.newBoard();
   }
   setBoard(x: number, y: number, v: number): void {
-    let { logic_board, board } = this;
-    logic_board[y][x] = v;
-    board[y][x*2] = v;
-    board[y][x*2 + 1] = v;
+    let { board, xoffs } = this;
+    let xpos = x*2 + xoffs;
+    let newv = v;
+    if (v) {
+      newv |= DOUBLE;
+      let xmod = xpos & 1;
+      newv |= xmod << XOFFS_SHIFT;
+    }
+    board[y][xpos] = newv;
+    board[y][xpos + 1] = newv;
+  }
+  logicBoard(x: number, y: number): number {
+    let v = this.board[y][this.xoffs + x * 2];
+    return v & (TARGET | COLORBITS);
   }
   newPiece(): void {
-    let { w, h, logic_board } = this;
+    let { w, h } = this;
     // check for clears
-    let any_targets = false;
+    let to_clear: JSVec2[] = [];
     for (let yy = 0; yy < h; ++yy) {
       for (let xx = 0; xx < w; ++xx) {
-        let color = logic_board[yy][xx];
+        let color = this.logicBoard(xx, yy);
         if (!color) {
           continue;
         }
-        if (color > TARGET) {
-          any_targets = true;
+        if (color & TARGET) {
           color -= TARGET;
         }
         if (xx <= w - MATCH_LEN) {
           let match_len = 1;
-          while (xx + match_len < w && matches(color, logic_board[yy][xx + match_len])) {
+          while (xx + match_len < w && matches(color, this.logicBoard(xx + match_len, yy))) {
             ++match_len;
           }
           if (match_len >= MATCH_LEN) {
             for (let ii = 0; ii < match_len; ++ii) {
-              this.setBoard(xx + ii, yy, 0);
+              to_clear.push([xx + ii, yy]);
             }
           }
         }
         if (yy <= h - MATCH_LEN) {
           let match_len = 1;
-          while (yy + match_len < h && matches(color, logic_board[yy + match_len][xx])) {
+          while (yy + match_len < h && matches(color, this.logicBoard(xx, yy + match_len))) {
             ++match_len;
           }
           if (match_len >= MATCH_LEN) {
             for (let ii = 0; ii < match_len; ++ii) {
-              this.setBoard(xx, yy + ii, 0);
+              to_clear.push([xx, yy + ii]);
             }
           }
         }
       }
     }
-
-    if (!any_targets) {
-      // win
-      return this.newBoard();
+    for (let ii = 0; ii < to_clear.length; ++ii) {
+      this.setBoard(to_clear[ii][0], to_clear[ii][1], 0);
     }
 
     this.block = randInt(this.num_blocks) + 1;
     this.pos = [this.w/2, 0];
     let px = round(this.pos[0]);
     let py = floor(this.pos[1]);
-    if (logic_board[py][px]) {
+    if (this.logicBoard(px, py)) {
       // lose
       this.newBoard();
     }
   }
   newBoard(): void {
-    let { w, h, num_blocks } = this;
-    let logic_board: number[][] = [];
-    let board: number[][] = [];
-    for (let yy = 0; yy < h; ++yy) {
-      let row: number[] = [];
-      logic_board.push(row);
-      for (let xx = 0; xx < w; ++xx) {
-        row.push(0);
-      }
-      row = [];
-      for (let xx = 0; xx < MINIGAME_W; ++xx) {
-        row.push(0);
-      }
-      board.push(row);
-    }
-    this.logic_board = logic_board;
-    this.board = board;
+    let { w, h, num_blocks, state, xoffs } = this;
+    state.clearBoard(xoffs);
     let num_targets = 8;
     for (let ii = 0; ii < num_targets; ++ii) {
       while (true) {
         let x = randInt(w);
         let y = 4 + randInt(h - 4);
-        if (logic_board[y][x]) {
+        if (this.logicBoard(x, y)) {
           continue;
         }
         this.setBoard(x, y, TARGET | (randInt(num_blocks) + 1));
@@ -532,11 +528,11 @@ class BlocksState {
   }
   down_time = 0;
   update(dt: number): void {
-    let { pos, w, h, logic_board } = this;
-    let pspd = dt / 140;
+    let { pos, w, h } = this;
+    let pspd = dt / 250;
     let old_px = round(pos[0]);
     let old_py = floor(pos[1]);
-    assert(!logic_board[old_py][old_px]);
+    assert(!this.logicBoard(old_px, old_py));
     if (actionEdge('left', { peek: true })) {
       pos[0] = round(pos[0]) - 0.51;
     }
@@ -551,7 +547,7 @@ class BlocksState {
     }
     pos[0] = clamp(pos[0], 0, w - 1);
     let px = round(pos[0]);
-    if (logic_board[old_py][px]) {
+    if (this.logicBoard(px, old_py)) {
       // user pushed into something horizontally
       px = old_px;
       pos[0] = old_px;
@@ -576,7 +572,7 @@ class BlocksState {
     if (py >= h) {
       this.setBoard(old_px, old_py, this.block);
       this.newPiece();
-    } else if (logic_board[py][px]) {
+    } else if (this.logicBoard(px, py)) {
       if (py !== old_py) {
         this.setBoard(old_px, old_py, this.block);
         this.newPiece();
@@ -584,34 +580,33 @@ class BlocksState {
         assert(false); // should have been blocked above
       }
     }
+
+    let any_targets = false;
+    for (let yy = 0; yy < h; ++yy) {
+      for (let xx = 0; xx < w; ++xx) {
+        let color = this.logicBoard(xx, yy);
+        if (color & TARGET) {
+          any_targets = true;
+        }
+      }
+    }
+    if (!any_targets) {
+      // win
+      return this.newBoard();
+    }
   }
   render(): void {
     terminal.normal();
-    let { pos, block, board, h } = this;
+    let { pos, block, xoffs } = this;
     let fg = BLOCK_COLORS[block];
     terminal.print({
-      x: round(pos[0]) * 2,
+      x: round(pos[0]) * 2 + xoffs,
       y: floor(pos[1]),
       fg: fg,
       bg: fg - 8,
       text: '▒▒',
     });
-
     terminal.normal();
-    for (let yy = 0; yy < h; ++yy) {
-      let row = board[yy];
-      for (let xx = 0; xx < row.length; ++xx) {
-        let v = row[xx];
-        if (v) {
-          terminal.print({
-            x: xx,
-            y: yy,
-            fg: BLOCK_COLORS[v & COLORBITS],
-            text: (v & TARGET) ? '▒' : '█',
-          });
-        }
-      }
-    }
   }
 }
 
@@ -1178,7 +1173,7 @@ let view_kaboom = { x: view_x, y: 1, w: MINIGAME_W, h: MINIGAME_H };
 view_x += MINIGAME_W + 1;
 function statePlay(dt: number): void {
   if (MODE_DEVELOPMENT && keyDown(KEYS.SHIFT)) {
-    dt *= 3;
+    dt *= 4;
   }
   terminal.auto_scroll = false;
   terminal.color(11, 0);
@@ -1215,11 +1210,11 @@ function statePlay(dt: number): void {
   terminal.subViewPush(view_board);
   game_state.breakout.render();
   terminal.subViewPop();
+  terminal.subViewPush(view_board);
+  game_state.blocks.render();
+  terminal.subViewPop();
   terminal.subViewPush(view_kaboom);
   game_state.kaboom.render();
-  terminal.subViewPop();
-  terminal.subViewPush(view_blocks);
-  game_state.blocks.render();
   terminal.subViewPop();
   terminal.subViewPush(view_board);
   gameStateRenderLate(game_state);
