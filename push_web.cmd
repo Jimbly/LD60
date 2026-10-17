@@ -1,7 +1,7 @@
 node build build
 
 @SET TORTOISE_PATH=%ProgramW6432%\TortoiseSVN\bin\TortoiseProc.exe
-@SET DEST=..\..\SRC2\web\dashingstrike.com\LudumDare\LDXX\
+@SET DEST=..\..\SRC2\web\dashingstrike.com\LudumDare\LD60\
 
 call node build build
 
@@ -9,7 +9,7 @@ rd /s /q %DEST%
 md %DEST%
 xcopy /SY dist\game\build.prod\client %DEST%
 
-"%TORTOISE_PATH%" /command:commit /path:%DEST%  /logmsg:"LDXX"
+"%TORTOISE_PATH%" /command:commit /path:%DEST%  /logmsg:"LD60"
 
 @pushd ..\..\SRC2\flightplans
 
