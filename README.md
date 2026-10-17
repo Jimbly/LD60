@@ -14,5 +14,7 @@ Acknowledgements:
 Start with: `npm start` (after running `npm i` once)
 
 TODO:
-* gravity in Blocks for non-targets when things under them break
 * balls bounce off of invaders paddle too
+* gravity in Blocks for non-targets when things under them break
+* tweak font so that half blocks are exactly half
+* win if all lives max out? scores?

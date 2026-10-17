@@ -9,6 +9,7 @@ import { MODE_DEVELOPMENT, platformParameterGet } from 'glov/client/client_confi
 import {
   debugDefineIsSet,
   startup as engineStartup,
+  getFrameTimestamp,
   setState,
 } from 'glov/client/engine';
 import { Box } from 'glov/client/geom_types';
@@ -142,6 +143,7 @@ type Ball = {
   dir: JSVec2;
 };
 
+const NUM_BALLS = 12;
 class BreakoutState implements Minigame {
   board: Board;
   w = MINIGAME_W;
@@ -149,6 +151,7 @@ class BreakoutState implements Minigame {
   player!: number;
   player_width = 5;
   block_xoffs = 1 + floor((this.w % BREAKOUT_BLOCK_W) / 2);
+  balls_left = 0;
   newBall(): void {
     this.state.balls.push({
       pos: [round(this.player) + this.xoffs, this.h - 2],
@@ -183,13 +186,14 @@ class BreakoutState implements Minigame {
     }
 
     this.player = this.w / 2;
+    this.balls_left = NUM_BALLS;
     this.newBall();
   }
 
   update(dt: number): void {
     let { xoffs, state, w, h, player_width, board } = this;
     let { balls } = state;
-    let spd = dt * 0.01;
+    let spd = dt * 0.02;
     if (actionDown('left')) {
       this.player = max((this.player_width - 1) / 2 + 1, this.player - spd);
     }
@@ -199,6 +203,7 @@ class BreakoutState implements Minigame {
     if (!balls.length) {
       this.newBall();
     }
+    let lost = false;
     for (let ball_idx = balls.length - 1; ball_idx >= 0; --ball_idx) {
       let ball = balls[ball_idx];
       let { pos: ball_pos, dir: ball_dir } = ball;
@@ -223,26 +228,44 @@ class BreakoutState implements Minigame {
       let bx = round(ball_pos[0]);
       let by = round(ball_pos[1]);
       let player0 = round(this.player - (player_width - 1)/2) + xoffs;
-      if (bx !== old_bx || by !== old_by) {
-        if (by === h - 1) {
-          if (
-            bx >= player0 &&
-            bx < player0 + player_width
-          ) {
-            ball_dir[1] *= -1;
-            ball_pos[1] = min(ball_pos[1], h - 2.5);
-            let impact = clamp((ball_pos[0] - (this.player + xoffs)) / (player_width / 2), -1, 1);
-            impact *= 0.75;
-            let vec = [sin(PI/2 * impact), -cos(PI/2 * impact)] as const;
-            v2lerp(ball_dir, 0.5 + abs(impact) * 0.5, ball_dir, vec);
-          }
+      if (by === h - 1) {
+        if (
+          bx >= player0 &&
+          bx < player0 + player_width
+        ) {
+          ball_dir[1] *= -1;
+          ball_pos[1] = min(ball_pos[1], h - 2.5);
+          let impact = clamp((ball_pos[0] - (this.player + xoffs)) / (player_width / 2), -1, 1);
+          impact *= 0.75;
+          let vec = [sin(PI/2 * impact), -cos(PI/2 * impact)] as const;
+          v2lerp(ball_dir, 0.5 + abs(impact) * 0.5, ball_dir, vec);
         }
+      }
+      if (bx !== old_bx || by !== old_by) {
         if (by === h) {
           ridx(balls, ball_idx);
-          this.newBall();
+          if (bx >= xoffs && bx <= xoffs + w) {
+            if (this.balls_left) {
+              this.balls_left--;
+            } else {
+              lost = true;
+            }
+          }
+          if (!lost) {
+            this.newBall();
+          }
         } else {
           let v = board[by]?.[bx];
           if (v) {
+            if (bx !== old_bx && by !== old_by) {
+              if (board[by][old_bx]) {
+                bx = old_bx;
+                ball_pos[0] = old_bx;
+              } else if (board[old_by][bx]) {
+                by = old_by;
+                ball_pos[1] = old_by;
+              }
+            }
             state.hitBlock(bx, by);
             if (bx !== old_bx) {
               ball_dir[0] *= -1;
@@ -268,16 +291,18 @@ class BreakoutState implements Minigame {
     }
     if (!any_left) {
       this.won();
+    } else if (lost) {
+      this.died();
     }
   }
   died(): void {
-    // this.state.gameLost(this);
+    this.state.gameLost(this);
   }
   won(): void {
     this.state.gameWon(this);
   }
   render(): void {
-    let { xoffs, h, player, player_width } = this;
+    let { xoffs, h, player, player_width, balls_left } = this;
     terminal.normal();
     let player_str = ['\x11'];
     for (let ii = 0; ii < player_width - 2; ++ii) {
@@ -291,6 +316,14 @@ class BreakoutState implements Minigame {
       fg: 9,
       text: player_str.join(''),
     });
+
+    let ballsx = floor((MINIGAME_W - NUM_BALLS - 2) / 2) + 1;
+    terminal.moveto(ballsx + xoffs, h);
+    terminal.print({ text: '╡', fg: BLOCK_COLORS[BORDER_BLOCK] });
+    for (let ii = 0; ii < NUM_BALLS; ++ii) {
+      terminal.print({ text: '■', fg: balls_left > ii ? 10 : 8 });
+    }
+    terminal.print({ text: '╞', fg: BLOCK_COLORS[BORDER_BLOCK] });
   }
 }
 
@@ -978,6 +1011,7 @@ class KaboomState implements Minigame {
 
 const ANIM_LOST_TIME = 2000;
 const ANIM_WON_TIME = 2000;
+const MAX_LIVES = 6;
 
 const WALL_X = [
   0,
@@ -986,7 +1020,7 @@ const WALL_X = [
   (MINIGAME_W + 1) * 3,
   (MINIGAME_W + 1) * 4 + 1 - 1,
 ];
-const INITIAL_HP = 3; // MODE_DEVELOPMENT ? 0 : 3;
+const INITIAL_HP = 3;
 type GameData = {
   a: number;
   b: number;
@@ -994,6 +1028,7 @@ type GameData = {
 class GameState {
   mode: 'explore' | 'combat' = 'explore';
   data: GameData = { a: 0, b: 0 };
+  lives!: number[];
   board!: Board;
   invaders!: InvadersState;
   breakout!: BreakoutState;
@@ -1002,6 +1037,7 @@ class GameState {
   minigames!: Minigame[];
   bullets!: Bullet[];
   balls!: Ball[];
+  game_over = false;
   constructor() {
     this.initBoard();
   }
@@ -1010,7 +1046,7 @@ class GameState {
     if (idx === 0 || idx === 4) {
       v |= INDESTRUCTIBLE;
     } else if (idx === 1 || idx === 2) {
-      v |= (y === 0 || y > MINIGAME_H*0.667) ?
+      v |= (y === 0 || y > MINIGAME_H - 4) ?
         INDESTRUCTIBLE :
         (INITIAL_HP<<HP_SHIFT);
       if (!INITIAL_HP && !(v & INDESTRUCTIBLE)) {
@@ -1095,11 +1131,22 @@ class GameState {
       this.blocks,
       this.kaboom,
     ];
+    this.lives = [];
+    for (let ii = 0; ii < this.minigames.length; ++ii) {
+      this.lives.push(3);
+    }
+    this.game_over = false;
+    // if (MODE_DEVELOPMENT) {
+    //   this.gameLost(this.breakout);
+    //   this.gameLost(this.breakout);
+    //   this.gameLost(this.breakout);
+    //   this.gameLost(this.breakout);
+    // }
   }
 
   anims: ({ type: 'won' | 'lost'; counter: number; max_counter: number } | null)[] = [];
   gameLost(game: Minigame): void {
-    let { minigames, anims } = this;
+    let { minigames, anims, lives } = this;
     let idx = minigames.indexOf(game);
     assert(idx !== -1);
     anims[idx] = {
@@ -1108,6 +1155,20 @@ class GameState {
       max_counter: ANIM_LOST_TIME,
     };
     this.animStarted(idx);
+    if (!lives[idx]) {
+      this.game_over = true;
+      for (let ii = 0; ii < minigames.length; ++ii) {
+        if (!anims[ii]) {
+          anims[ii] = {
+            type: 'lost',
+            counter: ANIM_LOST_TIME + 500 + ii * 200,
+            max_counter: ANIM_LOST_TIME + 500 + ii * 200,
+          };
+        }
+      }
+    } else {
+      lives[idx]--;
+    }
   }
   animStarted(idx: number): void {
     let { balls } = this;
@@ -1136,6 +1197,7 @@ class GameState {
       max_counter: ANIM_WON_TIME,
     };
     this.animStarted(idx);
+    this.lives[idx]++;
   }
 
   update(dt: number): void {
@@ -1145,12 +1207,16 @@ class GameState {
       if (anim) {
         anim.counter -= dt;
         if (anim.counter <= 0) {
-          this.anims[ii] = null;
-          this.softenWall(ii);
-          this.softenWall(ii + 1);
-          this.minigames[ii].newBoard();
+          if (this.game_over) {
+            anim.counter = 0;
+          } else {
+            this.anims[ii] = null;
+            this.softenWall(ii);
+            this.softenWall(ii + 1);
+            this.minigames[ii].newBoard();
+          }
         }
-      } else {
+      } else if (!this.game_over) {
         this.minigames[ii].update(dt);
       }
     }
@@ -1227,7 +1293,11 @@ class GameState {
 
   renderEarly(): void {
     terminal.normal();
-    terminal.clear();
+    terminal.fill({
+      x: 0, y: 0,
+      w: (MINIGAME_W + 1) * 4,
+      h: MINIGAME_H,
+    });
 
     let { board } = this;
 
@@ -1262,7 +1332,7 @@ class GameState {
   }
 
   renderLate(): void {
-    let { balls, bullets } = this;
+    let { balls, bullets, minigames, lives } = this;
     for (let ii = 0; ii < bullets.length; ++ii) {
       let b = bullets[ii];
       terminal.print({
@@ -1285,6 +1355,29 @@ class GameState {
         // text: fpart < -0.1667 ? '▀' : fpart > 0.1667 ? '▄' : '■',
         text: fpart < 0 ? '▀' : '▄',
       });
+    }
+
+    for (let ii = 0; ii < minigames.length; ++ii) {
+      let minigame = minigames[ii];
+      let xoffs = minigame.xoffs;
+      if (ii === 1) {
+        xoffs++;
+      }
+      let y = MINIGAME_H + 1;
+      let ballsx = floor((MINIGAME_W - MAX_LIVES - 2) / 2);
+      terminal.moveto(ballsx + xoffs, y);
+      let border = 1;
+      if (lives[ii] >= MAX_LIVES) {
+        border = 10;
+      } else if (lives[ii] <= 1) {
+        border = getFrameTimestamp() % 250 < 100 ? 4 : 12;
+      }
+      terminal.print({ text: '[', fg: border });
+      for (let jj = 0; jj < MAX_LIVES; ++jj) {
+        let good = lives[ii] > jj;
+        terminal.print({ text: good ? '♥' : '♦', fg: good ? 10 : 8 });
+      }
+      terminal.print({ text: ']', fg: border });
     }
   }
 
@@ -1334,6 +1427,42 @@ class GameState {
       }
       terminal.normal();
     }
+
+    if (this.game_over) {
+      let w = 41;
+      let x = floor((CHW - (w + 2))/2);
+      let y = 6;
+      terminal.color(15, 1);
+      terminal.cells({
+        x,
+        y,
+        ws: [w],
+        hs: [5],
+      });
+      x++;
+      y++;
+      terminal.fill({
+        x, y, w, h: 5,
+      });
+      let text = 'GAME OVER';
+      terminal.print({
+        x: x + floor((w - text.length) /2),
+        y: y + 1,
+        text,
+      });
+      if (terminal.menu({
+        color_sel: { fg: 14, bg: 1 },
+        color_execute: { fg: 9, bg: 14 },
+        x: x + 14,
+        y: y + 3,
+        key: 'game_over',
+        items: [
+          'TRY AGAIN',
+        ],
+      }) === 0) {
+        newGameInit();
+      }
+    }
   }
 
 }
@@ -1354,7 +1483,7 @@ export function setScore(): void {
 }
 
 let view_x = 0;
-let view_board = { x: view_x, y: 1, w: MINIGAME_W * 4 + 4, h: MINIGAME_H };
+let view_board = { x: view_x, y: 1, w: MINIGAME_W * 4 + 5, h: MINIGAME_H + 3 };
 let view_invaders = { x: view_x, y: 1, w: MINIGAME_W, h: MINIGAME_H };
 view_x += MINIGAME_W + 1;
 let view_breakout = { x: view_x, y: 1, w: MINIGAME_W, h: MINIGAME_H };

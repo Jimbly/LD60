@@ -44,17 +44,17 @@ function settingsOverlay(dt) {
       pre_unsel: '   ',
       key: 'terminal_settings',
       items: [
-        padRight(`Modem: ${MODEMS[modem_idx].label}`, 34),
+        // padRight(`Modem: ${MODEMS[modem_idx].label}`, 34), // LDJAM
         padRight(`Display: ${engine.getViewportPostprocess() ? 'CRT' : 'LCD'}`, 34),
         padRight(`Exit ${ansi.yellow.bright('[O]')}ptions`, 34),
       ],
     });
-    if (sel === 0) {
+    if (sel === -2) { // LDJAM
       modem_idx = (modem_idx + settings_terminal.menu_select_delta + MODEMS.length) % MODEMS.length;
       base_terminal.baud = MODEMS[modem_idx].baud;
-    } else if (sel === 1) {
+    } else if (sel === 0) { // LDJAM
       engine.setViewportPostprocess(!engine.getViewportPostprocess());
-    } else if (sel === 2 || input.keyDownEdge(KEYS.ESCAPE)) {
+    } else if (sel === 1 || input.keyDownEdge(KEYS.ESCAPE)) { // LDJAM
       settings_up = false;
     }
 
