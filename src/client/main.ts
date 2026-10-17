@@ -11,7 +11,6 @@ import {
   startup as engineStartup,
   setState,
 } from 'glov/client/engine';
-import { Box } from 'glov/client/geom_types';
 import { localStorageGet, localStorageGetJSON, localStorageSetJSON } from 'glov/client/local_storage';
 import { netInit } from 'glov/client/net';
 import { scoreAlloc, ScoreSystem } from 'glov/client/score';
@@ -177,11 +176,7 @@ class BreakoutState {
     }
     v2iNormalize(ball_dir);
   }
-  sub_view: Box = { x: 0, y: 0, w: MINIGAME_W, h: MINIGAME_H };
-  render(x: number, y: number): void {
-    this.sub_view.x = x;
-    this.sub_view.y = y;
-    terminal.subViewPush(this.sub_view);
+  render(): void {
     terminal.color(7, 0);
     terminal.clear();
     let { h, board, block, ball_pos, player, player_width } = this;
@@ -220,7 +215,97 @@ class BreakoutState {
       fg: 12,
       text: player_str.join(''),
     });
-    terminal.subViewPop();
+  }
+}
+
+class DodgeState {
+  player = MINIGAME_W/2;
+  player_width = 1;
+  w = MINIGAME_W;
+  h = MINIGAME_H;
+  board: JSVec2[];
+  last_row: JSVec2;
+  pos = 0;
+  newRow(): void {
+    let { last_row, h, board } = this;
+    let mx = 5;
+    let row: JSVec2 = [clamp(last_row[0] + randInt(3) - 1, 1, mx), clamp(last_row[1] + randInt(3) - 1, 1, mx)];
+    board.unshift(row);
+    if (board.length > h) {
+      board.pop();
+    }
+    this.last_row = row;
+  }
+  constructor() {
+    this.last_row = [round(this.w/8), round(this.w/8)];
+    let board: JSVec2[] = [];
+    this.board = board;
+    for (let ii = 0; ii < this.h; ++ii) {
+      this.newRow();
+    }
+  }
+  crash(): void {
+    this.player = MINIGAME_W/2;
+    for (let ii = 0; ii < this.h; ++ii) {
+      this.newRow();
+    }
+  }
+
+  update(dt: number): void {
+    let { w, board } = this;
+    let hspd = dt * 0.01 * 0.7;
+    let row0 = board[this.board.length-1];
+    if (actionDown('left')) {
+      this.player = max(row0[0] - 0.5, this.player - hspd);
+    }
+    if (actionDown('right')) {
+      this.player = min(this.w - row0[1] - 0.5 - 1, this.player + hspd);
+    }
+    let vspd = dt * 0.007;
+    this.pos += vspd;
+    if (this.pos > 1) {
+      --this.pos;
+      this.newRow();
+
+      let row = board[this.board.length-1];
+      let player_pos = round(this.player);
+      if (player_pos < row[0] || player_pos >= w - row[1]) {
+        this.crash();
+      }
+    }
+
+  }
+  render(): void {
+    terminal.color(7, 0);
+    terminal.clear();
+    let { player, h, w, board } = this;
+    terminal.print({
+      x: round(player),
+      y: h - 1,
+      fg: 12,
+      text: '\x1E',
+    });
+
+    for (let yy = 0; yy < board.length; ++yy) {
+      let pair = board[yy];
+      terminal.moveto(0, yy);
+      let leftw = pair[0];
+      for (let ii = 0; ii < leftw; ++ii) {
+        terminal.print({
+          fg: 8,
+          text: ii === leftw - 1 ? '▓' : ii === leftw - 2 ? '▒' : '░',
+        });
+      }
+      let rightw = pair[1];
+      terminal.moveto(w - rightw, yy);
+      for (let ii = 0; ii < rightw; ++ii) {
+        terminal.print({
+          fg: 8,
+          text: ii === 0 ? '▓' : ii === 1 ? '▒' : '░',
+        });
+      }
+    }
+
   }
 }
 
@@ -232,6 +317,7 @@ class GameState {
   mode: 'explore' | 'combat' = 'explore';
   data: GameData = { a: 0, b: 0 };
   breakout = new BreakoutState();
+  dodge = new DodgeState();
 }
 let game_state: GameState;
 export function gameState(): GameState {
@@ -249,14 +335,29 @@ export function setScore(): void {
   score_system.setScore(0, score);
 }
 
+let view_breakout = { x: 30, y: 1, w: MINIGAME_W, h: MINIGAME_H };
+let view_dodge = { x: 30 + MINIGAME_W + 1, y: 1, w: MINIGAME_W, h: MINIGAME_H };
 function statePlay(dt: number): void {
   terminal.auto_scroll = false;
+  terminal.color(3, 0);
   terminal.cells({
-    x: 30-1, y: 1 - 1, ws: [MINIGAME_W], hs: [MINIGAME_H], charset: 1,
+    x: view_breakout.x - 1, y: view_breakout.y - 1, ws: [MINIGAME_W], hs: [MINIGAME_H], charset: 1,
     header: ' BREAKOUT ',
   });
+  terminal.subViewPush(view_breakout);
   game_state.breakout.update(dt);
-  game_state.breakout.render(30, 1);
+  game_state.breakout.render();
+  terminal.subViewPop();
+
+  terminal.color(3, 0);
+  terminal.cells({
+    x: view_dodge.x - 1, y: view_dodge.y - 1, ws: [MINIGAME_W], hs: [MINIGAME_H], charset: 1,
+    header: ' DODGE ',
+  });
+  terminal.subViewPush(view_dodge);
+  game_state.dodge.update(dt);
+  game_state.dodge.render();
+  terminal.subViewPop();
 
   terminal.render();
 }
