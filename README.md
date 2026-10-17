@@ -9,7 +9,7 @@ Ludum Dare 60 Entry by Jimbly - "Game Title"
   * Title and menu screens to access engine's high score display, keybinds, etc
 
 Acknowledgements:
-* [Perfect VGA font](https://somewhere)
+* [IBM VGA 8x16 font](https://int10h.org/oldschool-pc-fonts/fontlist/?1#ibm-g2)
 
 Start with: `npm start` (after running `npm i` once)
 

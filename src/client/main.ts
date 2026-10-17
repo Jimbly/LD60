@@ -32,7 +32,7 @@ Z.SPRITES = 10;
 
 // let app = exports;
 // Virtual viewport for our game logic
-const game_width = 720;
+const game_width = 640;
 const game_height = 400;
 
 let terminal: ReturnType<typeof terminalCreate>;
@@ -46,6 +46,7 @@ let score_system: ScoreSystem<Score>;
 function init(): void {
   terminal = terminalCreate({
     z: Z.BACKGROUND + 1,
+    char_width: 8,
   });
 
   const ENCODE_A = 10000;
@@ -237,7 +238,7 @@ class BreakoutState {
     terminal.print({
       x: round(player) - (player_width - 1) / 2,
       y: h - 1,
-      fg: 12,
+      fg: 9,
       text: player_str.join(''),
     });
   }
@@ -744,7 +745,7 @@ class InvadersState {
     terminal.print({
       x: max(0, px - 2),
       y: h - 1,
-      fg: 12,
+      fg: 9,
       text: `${px > 1 ? '\x11' : ''}═╩═${px < w - 2 ? '\x10' : ''}`,
     });
 
@@ -1123,10 +1124,10 @@ export function main(): void {
     viewport_postprocess: true,
     font: {
       // eslint-disable-next-line n/global-require
-      info: require('./img/font/vga_16x1.json'),
-      texture: 'font/vga_16x1',
+      info: require('./img/font/ibm8x16x1.json'),
+      texture: 'font/ibm8x16x1',
     },
-    pixel_aspect: (640/480) / (720 / 400),
+    pixel_aspect: (640/480) / (640 / 400),
     show_fps: false,
     ui_sounds: SOUND_DATA,
   })) {
