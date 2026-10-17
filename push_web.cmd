@@ -1,4 +1,5 @@
 node build build
+xcopy /s /y dist\game\build.prod\client\*.* W:\thesilentb.com\ld60\test1\
 
 @SET TORTOISE_PATH=%ProgramW6432%\TortoiseSVN\bin\TortoiseProc.exe
 @SET DEST=..\..\SRC2\web\dashingstrike.com\LudumDare\LD60\

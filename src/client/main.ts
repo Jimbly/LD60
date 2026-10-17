@@ -17,7 +17,7 @@ import { keyDown, keyDownEdge, KEYS } from 'glov/client/input';
 import { localStorageGet, localStorageGetJSON, localStorageSetJSON } from 'glov/client/local_storage';
 import { netInit } from 'glov/client/net';
 import { scoreAlloc, ScoreSystem } from 'glov/client/score';
-import { terminalCreate } from 'glov/client/terminal';
+import { ansi_to_unicode_a, terminalCreate } from 'glov/client/terminal';
 import { terminalSettingsInit, terminalSettingsShow } from 'glov/client/terminal_settings';
 import { scaleSizes, setFontHeight } from 'glov/client/ui';
 import { ansi } from 'glov/common/ansi';
@@ -132,6 +132,7 @@ interface Minigame {
   // constructor(xoffs: number, state: GameState);
   xoffs: number;
   render(): void;
+  renderDuringAnim?(): void;
   update(dt: number): void;
   newBoard(): void;
   won(): void;
@@ -143,7 +144,7 @@ type Ball = {
   dir: JSVec2;
 };
 
-const NUM_BALLS = 12;
+const NUM_BALLS = 8;
 class BreakoutState implements Minigame {
   board: Board;
   w = MINIGAME_W;
@@ -227,18 +228,24 @@ class BreakoutState implements Minigame {
       }
       let bx = round(ball_pos[0]);
       let by = round(ball_pos[1]);
-      let player0 = round(this.player - (player_width - 1)/2) + xoffs;
-      if (by === h - 1) {
-        if (
-          bx >= player0 &&
-          bx < player0 + player_width
-        ) {
-          ball_dir[1] *= -1;
-          ball_pos[1] = min(ball_pos[1], h - 2.5);
-          let impact = clamp((ball_pos[0] - (this.player + xoffs)) / (player_width / 2), -1, 1);
-          impact *= 0.75;
-          let vec = [sin(PI/2 * impact), -cos(PI/2 * impact)] as const;
-          v2lerp(ball_dir, 0.5 + abs(impact) * 0.5, ball_dir, vec);
+      let player_pos = [
+        round(this.player - (player_width - 1)/2) + xoffs,
+        round(state.invaders.player - (5 - 1)/2 + state.invaders.xoffs),
+      ];
+      for (let ii = 0; ii < player_pos.length; ++ii) {
+        let player0 = player_pos[ii];
+        if (by === h - 1) {
+          if (
+            bx >= player0 &&
+            bx < player0 + player_width
+          ) {
+            ball_dir[1] *= -1;
+            ball_pos[1] = min(ball_pos[1], h - 2.5);
+            let impact = clamp((ball_pos[0] - (this.player + xoffs)) / (player_width / 2), -1, 1);
+            impact *= 0.75;
+            let vec = [sin(PI/2 * impact), -cos(PI/2 * impact)] as const;
+            v2lerp(ball_dir, 0.5 + abs(impact) * 0.5, ball_dir, vec);
+          }
         }
       }
       if (bx !== old_bx || by !== old_by) {
@@ -862,6 +869,8 @@ class KaboomState implements Minigame {
   board: Board;
   xoffs: number;
   state: GameState;
+  points = 0;
+  goal = 0;
   constructor(xoffs: number, state: GameState) {
     this.xoffs = xoffs + 1;
     this.state = state;
@@ -890,12 +899,14 @@ class KaboomState implements Minigame {
         row[xpos + 1] = v;
       }
     }
+    this.points = 0;
+    this.goal = 20;
   }
   died(): void {
     this.state.gameLost(this);
   }
   won(): void {
-    // this.state.gameWon(this);
+    this.state.gameWon(this);
   }
   update(dt: number): void {
     this.bullet_counter -= dt;
@@ -950,6 +961,7 @@ class KaboomState implements Minigame {
         b.y === py && b.x >= px && b.x < px + player_width ||
         b.y === py + 1 && b.x >= px + 1 && b.x < px + player_width - 1
       ) {
+        this.points++;
         ridx(bullets, ii);
       } else if (board[b.y][b.x]) {
         state.hitBlock(b.x, b.y);
@@ -969,7 +981,9 @@ class KaboomState implements Minigame {
     if (!any_left) {
       dead = true;
     }
-    if (dead) {
+    if (this.points === this.goal) {
+      this.won();
+    } else if (dead) {
       this.died();
     }
   }
@@ -1006,6 +1020,16 @@ class KaboomState implements Minigame {
       fg: 12,
       text: '\x01',
     });
+    this.renderDuringAnim();
+  }
+  renderDuringAnim(): void {
+    let { xoffs, points, goal, h } = this;
+    let text = `${points} / ${goal}`;
+    let ballsx = floor((MINIGAME_W - text.length - 2) / 2) + 1;
+    terminal.moveto(ballsx + xoffs, h);
+    terminal.print({ text: '╡', fg: BLOCK_COLORS[BORDER_BLOCK] });
+    terminal.print({ text, fg: 10 });
+    terminal.print({ text: '╞', fg: BLOCK_COLORS[BORDER_BLOCK] });
   }
 }
 
@@ -1020,11 +1044,20 @@ const WALL_X = [
   (MINIGAME_W + 1) * 3,
   (MINIGAME_W + 1) * 4 + 1 - 1,
 ];
-const INITIAL_HP = 3;
+const INITIAL_HP = 3; // MODE_DEVELOPMENT ? 0 : 3;
 type GameData = {
   a: number;
   b: number;
 };
+const META_MAP = [
+  [true, false, false, false],
+  [false, true, false, false],
+  [false, false, true, false],
+  [false, false, false, true],
+  [true, true, false, false],
+  [true, true, true, false],
+  [true, true, true, true],
+];
 class GameState {
   mode: 'explore' | 'combat' = 'explore';
   data: GameData = { a: 0, b: 0 };
@@ -1038,6 +1071,8 @@ class GameState {
   bullets!: Bullet[];
   balls!: Ball[];
   game_over = false;
+  meta = 0;
+  active!: boolean[];
   constructor() {
     this.initBoard();
   }
@@ -1100,6 +1135,10 @@ class GameState {
           // always solid, don't touch
         } else {
           v &= ~INDESTRUCTIBLE;
+          let hp = (v >> HP_SHIFT) & HP_MASK;
+          if (hp && hp > 2) {
+            v &= ~(HP_MASK << HP_SHIFT) | (2 << HP_SHIFT);
+          }
           board[yy][x] = v;
         }
       }
@@ -1136,6 +1175,8 @@ class GameState {
       this.lives.push(3);
     }
     this.game_over = false;
+    this.meta = 3;
+    this.active = META_MAP[this.meta];
     // if (MODE_DEVELOPMENT) {
     //   this.gameLost(this.breakout);
     //   this.gameLost(this.breakout);
@@ -1167,7 +1208,9 @@ class GameState {
         }
       }
     } else {
-      lives[idx]--;
+      if (this.meta >= 4) {
+        lives[idx]--;
+      }
     }
   }
   animStarted(idx: number): void {
@@ -1197,7 +1240,20 @@ class GameState {
       max_counter: ANIM_WON_TIME,
     };
     this.animStarted(idx);
-    this.lives[idx]++;
+    if (this.meta >= 4) {
+      this.lives[idx]++;
+    }
+    if (this.meta < META_MAP.length - 1) {
+      this.meta++;
+      this.active = META_MAP[this.meta];
+      for (let ii = 1; ii < 4; ++ii) {
+        if (this.active[ii-1] && this.active[ii]) {
+          this.softenWall(ii);
+        } else {
+          this.rebuildWall(ii);
+        }
+      }
+    }
   }
 
   update(dt: number): void {
@@ -1211,13 +1267,19 @@ class GameState {
             anim.counter = 0;
           } else {
             this.anims[ii] = null;
-            this.softenWall(ii);
-            this.softenWall(ii + 1);
+            if (this.active[ii-1] && this.active[ii]) {
+              this.softenWall(ii);
+            }
+            if (this.active[ii] && this.active[ii + 1]) {
+              this.softenWall(ii + 1);
+            }
             this.minigames[ii].newBoard();
           }
         }
       } else if (!this.game_over) {
-        this.minigames[ii].update(dt);
+        if (this.active[ii]) {
+          this.minigames[ii].update(dt);
+        }
       }
     }
     this.updateLate(dt);
@@ -1305,34 +1367,35 @@ class GameState {
       let row = board[yy];
       for (let xx = 0; xx < row.length; ++xx) {
         let v = row[xx];
-        if (v) {
-          let ch = (v & INDESTRUCTIBLE) ? '▓' : (v & TARGET) ? '\x02' : '█';
-          let hp = (v & HP) >> HP_SHIFT;
-          let fg = BLOCK_COLORS[v & COLORBITS];
-          let bg = (v & TARGET) ? 0 :
-            BLOCK_COLORS[v & COLORBITS] - 8;
-          if (v & BORDER) {
-            bg = 0;
-            ch = ((v & INDESTRUCTIBLE) && !hp || hp === 3) ? '║' : '│';
-            if (hp === 1) {
-              fg -= 8;
-            }
-          }
-          terminal.print({
-            x: xx,
-            y: yy,
-            fg,
-            bg,
-            text: ch,
-          });
+        if (!v) {
+          continue;
         }
+        let ch = (v & INDESTRUCTIBLE) ? '▓' : (v & TARGET) ? '\x02' : '█';
+        let hp = (v & HP) >> HP_SHIFT;
+        let fg = BLOCK_COLORS[v & COLORBITS];
+        let bg = (v & TARGET) ? 0 :
+          BLOCK_COLORS[v & COLORBITS] - 8;
+        if (v & BORDER) {
+          bg = 0;
+          ch = ((v & INDESTRUCTIBLE) && !hp || hp === 3) ? '║' : '│';
+          if (hp === 1) {
+            fg -= 8;
+          }
+        }
+        terminal.print({
+          x: xx,
+          y: yy,
+          fg,
+          bg,
+          text: ch,
+        });
       }
     }
     terminal.normal();
   }
 
   renderLate(): void {
-    let { balls, bullets, minigames, lives } = this;
+    let { active, anims, balls, bullets, minigames, lives } = this;
     for (let ii = 0; ii < bullets.length; ++ii) {
       let b = bullets[ii];
       terminal.print({
@@ -1357,27 +1420,56 @@ class GameState {
       });
     }
 
-    for (let ii = 0; ii < minigames.length; ++ii) {
-      let minigame = minigames[ii];
-      let xoffs = minigame.xoffs;
-      if (ii === 1) {
-        xoffs++;
+    if (this.meta >= 4) {
+      for (let ii = 0; ii < minigames.length; ++ii) {
+        let minigame = minigames[ii];
+        let xoffs = minigame.xoffs;
+        if (ii === 1) {
+          xoffs++;
+        }
+        let y = MINIGAME_H + 1;
+        let ballsx = floor((MINIGAME_W - MAX_LIVES - 2) / 2);
+        terminal.moveto(ballsx + xoffs, y);
+        let border = 1;
+        if (lives[ii] >= MAX_LIVES) {
+          border = 10;
+        } else if (lives[ii] <= 1) {
+          border = getFrameTimestamp() % 250 < 100 ? 4 : 12;
+        }
+        terminal.print({ text: '[', fg: border });
+        for (let jj = 0; jj < MAX_LIVES; ++jj) {
+          let good = lives[ii] > jj;
+          terminal.print({ text: good ? '♥' : '♦', fg: good ? 10 : 8 });
+        }
+        terminal.print({ text: ']', fg: border });
       }
-      let y = MINIGAME_H + 1;
-      let ballsx = floor((MINIGAME_W - MAX_LIVES - 2) / 2);
-      terminal.moveto(ballsx + xoffs, y);
-      let border = 1;
-      if (lives[ii] >= MAX_LIVES) {
-        border = 10;
-      } else if (lives[ii] <= 1) {
-        border = getFrameTimestamp() % 250 < 100 ? 4 : 12;
+    }
+
+    for (let ii = 0; ii < active.length; ++ii) {
+      if (!active[ii]) {
+        let minigame = minigames[ii];
+        if (anims[ii]) {
+          minigame.renderDuringAnim?.();
+        } else {
+          let xoffs = minigame.xoffs;
+          if (ii === 1) {
+            xoffs++;
+          }
+          for (let yy = 0; yy < MINIGAME_H; ++yy) {
+            for (let xx = 0; xx < MINIGAME_W; ++xx) {
+              let ch = String.fromCharCode(ansi_to_unicode_a[
+                176 + floor((randSpatial(777, xx + xoffs, yy, 1) + ((getFrameTimestamp()/50000)%1)) * (224-176))]);
+              terminal.print({
+                x: xx + xoffs,
+                y: yy,
+                text: ch,
+                fg: 8,
+                bg: 0,
+              });
+            }
+          }
+        }
       }
-      terminal.print({ text: '[', fg: border });
-      for (let jj = 0; jj < MAX_LIVES; ++jj) {
-        let good = lives[ii] > jj;
-        terminal.print({ text: good ? '♥' : '♦', fg: good ? 10 : 8 });
-      }
-      terminal.print({ text: ']', fg: border });
     }
   }
 
@@ -1385,7 +1477,9 @@ class GameState {
     this.renderEarly();
     for (let ii = 0; ii < this.minigames.length; ++ii) {
       let minigame = this.minigames[ii];
-      minigame.render();
+      if (this.active[ii]) {
+        minigame.render();
+      }
     }
     this.renderLate();
 
@@ -1506,18 +1600,22 @@ function statePlay(dt: number): void {
   terminal.color(11, 0);
   for (let ii = 0; ii < views.length; ++ii) {
     let rect = views[ii][1];
-    terminal.cells({
-      x: rect.x, y: rect.y - 1, ws: [rect.w], hs: [rect.h], charset: 1,
-      header: ` ${views[ii][0]} `,
-    });
+    if (game_state.active[ii]) {
+      terminal.cells({
+        x: rect.x, y: rect.y - 1, ws: [rect.w], hs: [rect.h], charset: 1,
+        header: ` ${views[ii][0]} `,
+      });
+    }
   }
 
-  for (let ii = 0; ii < 4; ++ii) {
-    if (keyDownEdge(KEYS['1'] + ii)) {
-      if (keyDown(KEYS.SHIFT)) {
-        game_state.minigames[ii].won();
-      } else {
-        game_state.minigames[ii].died();
+  if (MODE_DEVELOPMENT) {
+    for (let ii = 0; ii < 4; ++ii) {
+      if (keyDownEdge(KEYS['1'] + ii)) {
+        if (keyDown(KEYS.SHIFT)) {
+          game_state.minigames[ii].won();
+        } else {
+          game_state.minigames[ii].died();
+        }
       }
     }
   }

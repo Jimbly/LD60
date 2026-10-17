@@ -14,7 +14,8 @@ Acknowledgements:
 Start with: `npm start` (after running `npm i` once)
 
 TODO:
-* balls bounce off of invaders paddle too
+* track: level of each game
+  * first level should be super easy
 * gravity in Blocks for non-targets when things under them break
 * tweak font so that half blocks are exactly half
 * win if all lives max out? scores?
