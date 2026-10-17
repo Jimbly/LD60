@@ -19,7 +19,7 @@ import { terminalSettingsInit, terminalSettingsShow } from 'glov/client/terminal
 import { scaleSizes, setFontHeight } from 'glov/client/ui';
 import { ansi } from 'glov/common/ansi';
 import { Rec } from 'glov/common/types';
-import { clamp, ridx } from 'glov/common/util';
+import { clamp, ridx, sign } from 'glov/common/util';
 import { JSVec2, v2iNormalize, v2lerp } from 'glov/common/vmath';
 import { SOUND_DATA } from './sound_data';
 
@@ -79,8 +79,10 @@ function randInt(range: number): number {
   return floor(random() * range);
 }
 
-const MINIGAME_W = 16;
+const MINIGAME_W = 18;
 const MINIGAME_H = 20;
+
+const BLOCK_COLORS = [12, 9, 14, 11];
 
 const BREAKOUT_BLOCK_W = 4;
 
@@ -103,7 +105,7 @@ class BreakoutState {
     for (let yy = 0; yy < MINIGAME_H/2; ++yy) {
       let row: number[] = board[yy] = [];
       for (let xx = 0; xx < floor(MINIGAME_W/BREAKOUT_BLOCK_W); ++xx) {
-        row.push(1 + randInt(4));
+        row.push(1 + randInt(BLOCK_COLORS.length));
       }
     }
     this.w = board[0].length * BREAKOUT_BLOCK_W;
@@ -188,7 +190,7 @@ class BreakoutState {
           terminal.print({
             x: xx * BREAKOUT_BLOCK_W,
             y: yy,
-            fg: 8 + row[xx],
+            fg: BLOCK_COLORS[row[xx] - 1],
             text: block,
           });
         }
@@ -449,14 +451,16 @@ class BlocksState {
     terminal.color(7, 0);
     terminal.clear();
     let { pos, block, board, w, h } = this;
-
+    let fg = BLOCK_COLORS[block - 1];
     terminal.print({
       x: round(pos[0]) * 2,
       y: floor(pos[1]),
-      fg: [12, 9, 14, 11][block - 1],
-      text: '██',
+      fg: fg,
+      bg: fg - 8,
+      text: '▒▒',
     });
 
+    terminal.color(7, 0);
     for (let yy = 0; yy < h; ++yy) {
       let row = board[yy];
       for (let xx = 0; xx < w; ++xx) {
@@ -466,8 +470,8 @@ class BlocksState {
           terminal.print({
             x: xx * 2,
             y: yy,
-            fg: [12, 9, 14, 11][color - 1],
-            text: cell > TARGET ? '▓▓' : '██',
+            fg: BLOCK_COLORS[color - 1],
+            text: cell > TARGET ? '▒▒' : '██',
           });
         }
       }
@@ -656,8 +660,7 @@ class InvadersState {
         if (
           posidx === player_pos ||
           posidx === player_pos + 1 ||
-          posidx === player_pos - 1 ||
-          posidx === player_pos - w
+          posidx === player_pos - 1
         ) {
           hit = true;
         }
@@ -683,19 +686,20 @@ class InvadersState {
   render(): void {
     terminal.color(7, 0);
     terminal.clear();
-    let { invaders, invader_bullets, player_bullets, player, h } = this;
+    let { invaders, invader_bullets, player_bullets, player, w, h } = this;
 
+    // terminal.print({
+    //   x: round(player),
+    //   y: h - 2,
+    //   fg: 12,
+    //   text: '╥',
+    // });
+    let px = round(player);
     terminal.print({
-      x: round(player),
-      y: h - 2,
-      fg: 12,
-      text: '╥',
-    });
-    terminal.print({
-      x: round(player) - 1,
+      x: max(0, px - 2),
       y: h - 1,
       fg: 12,
-      text: '▄█▄',
+      text: `${px > 1 ? '\x11' : ''}═╩═${px < w - 2 ? '\x10' : ''}`,
     });
 
     for (let ii = 0; ii < invaders.length; ++ii) {
@@ -721,6 +725,172 @@ class InvadersState {
   }
 }
 
+const KABOOM_SPEED = 100;
+const KABOOM_BULLET_TIME = 200;
+class KaboomState {
+  w = MINIGAME_W;
+  h = MINIGAME_H;
+  player_width = 5;
+  player = 0;
+  py = this.h - 4;
+  enemy = 0;
+  enemy_counter = 0;
+  shoot_counter = 0;
+  bullet_counter = 0;
+  enemy_target = 0;
+  bullets!: JSVec2[];
+  board!: number[][];
+  constructor() {
+    this.newGame();
+  }
+  newGame(): void {
+    this.player = this.w / 2;
+    this.enemy = this.w / 2;
+    this.enemy_counter = 0;
+    this.shoot_counter = 2000;
+    this.bullets = [];
+    this.board = [];
+    let { w, h } = this;
+    for (let yy = 0; yy < h; ++yy) {
+      let row: number[] = [];
+      this.board.push(row);
+      for (let xx = 0; xx < w/2; ++xx) {
+        let color = yy >= h - 2 ? randInt(BLOCK_COLORS.length) + 1 : 0;
+        row.push(color, color);
+      }
+    }
+  }
+  died(): void {
+    this.newGame();
+  }
+  updateBullets(dt: number): void {
+    this.bullet_counter -= dt;
+    if (this.bullet_counter > 0) {
+      return;
+    }
+    this.bullet_counter += KABOOM_BULLET_TIME;
+    let { bullets, h } = this;
+    for (let ii = bullets.length - 1; ii >= 0; --ii) {
+      let b = bullets[ii];
+      b[1]++;
+      if (b[1] === h) {
+        ridx(bullets, ii);
+      }
+    }
+  }
+  update(dt: number): void {
+    let { w, py, player_width, bullets, board } = this;
+    this.updateBullets(dt);
+    this.shoot_counter -= dt;
+    if (this.shoot_counter <= 0) {
+      this.shoot_counter += KABOOM_SPEED * 3;
+      this.bullets.push([this.enemy, 1]);
+    }
+    this.enemy_counter -= dt;
+    if (this.enemy_counter <= 0) {
+      this.enemy_counter += KABOOM_SPEED;
+      while (this.enemy_target === this.enemy) {
+        this.enemy_target = randInt(this.w);
+      }
+      let delta = sign(this.enemy_target - this.enemy);
+      this.enemy += delta;
+    }
+
+    let hspd = dt * 0.01 * 4;
+    if (actionDown('left')) {
+      this.player = max((player_width - 1) / 2, this.player - hspd);
+    }
+    if (actionDown('right')) {
+      this.player = min(w - (player_width - 1) / 2 - 1, this.player + hspd);
+    }
+
+    let px = round(this.player - (player_width - 1) / 2);
+    let dead = false;
+    for (let ii = bullets.length - 1; ii >= 0; --ii) {
+      let b = bullets[ii];
+      if (
+        b[1] === py && b[0] >= px && b[0] < px + player_width ||
+        b[1] === py + 1 && b[0] >= px + 1 && b[0] < px + player_width - 1
+      ) {
+        ridx(bullets, ii);
+      } else if (board[b[1]][b[0]]) {
+        let bx = b[0] & ~1;
+        board[b[1]][bx] = 0;
+        board[b[1]][bx + 1] = 0;
+        ridx(bullets, ii);
+        let any_left = false;
+        for (let yy = 0; yy < board.length; ++yy) {
+          for (let xx = 0; xx < board[yy].length; ++xx) {
+            if (board[yy][xx]) {
+              any_left = true;
+              break;
+            }
+          }
+        }
+        if (!any_left) {
+          dead = true;
+        }
+      }
+    }
+    if (dead) {
+      this.died();
+    }
+  }
+  render(): void {
+    terminal.color(7, 0);
+    terminal.clear();
+    let { bullets, player, player_width, enemy, py, board, w, h } = this;
+
+    let px = round(player - (player_width - 1) / 2);
+    terminal.print({
+      x: max(0, px),
+      y: py,
+      fg: 11,
+      text: '\\═══/',
+    });
+    terminal.print({
+      x: max(0, px),
+      y: py + 1,
+      fg: 11,
+      text: ' \\═/',
+    });
+
+    terminal.print({
+      x: enemy,
+      y: 0,
+      fg: 12,
+      text: '\x01',
+    });
+
+    for (let ii = 0; ii < bullets.length; ++ii) {
+      let b = bullets[ii];
+      terminal.print({
+        x: b[0],
+        y: b[1],
+        fg: 12,
+        text: '\x0f',
+      });
+    }
+
+    for (let yy = 0; yy < h; ++yy) {
+      let row = board[yy];
+      for (let xx = 0; xx < w; ++xx) {
+        let cell = row[xx];
+        if (cell) {
+          let color = cell > TARGET ? cell - TARGET : cell;
+          terminal.print({
+            x: xx,
+            y: yy,
+            fg: BLOCK_COLORS[color - 1],
+            text: cell > TARGET ? '▒' : '█',
+          });
+        }
+      }
+    }
+
+  }
+}
+
 type GameData = {
   a: number;
   b: number;
@@ -732,6 +902,7 @@ class GameState {
   dodge = new DodgeState();
   blocks = new BlocksState();
   invaders = new InvadersState();
+  kaboom = new KaboomState();
 }
 let game_state: GameState;
 export function gameState(): GameState {
@@ -756,7 +927,7 @@ let view_breakout = { x: view_x, y: 1, w: MINIGAME_W, h: MINIGAME_H };
 view_x += MINIGAME_W + 1;
 let view_blocks = { x: view_x, y: 1, w: MINIGAME_W, h: MINIGAME_H };
 view_x += MINIGAME_W + 1;
-let view_dodge = { x: view_x, y: 1, w: MINIGAME_W, h: MINIGAME_H };
+let view_kaboom = { x: view_x, y: 1, w: MINIGAME_W, h: MINIGAME_H };
 view_x += MINIGAME_W + 1;
 function statePlay(dt: number): void {
   terminal.auto_scroll = false;
@@ -770,15 +941,27 @@ function statePlay(dt: number): void {
   game_state.breakout.render();
   terminal.subViewPop();
 
-  terminal.color(3, 0);
-  terminal.cells({
-    x: view_dodge.x - 1, y: view_dodge.y - 1, ws: [MINIGAME_W], hs: [MINIGAME_H], charset: 1,
-    header: ' DODGE ',
-  });
-  terminal.subViewPush(view_dodge);
-  game_state.dodge.update(dt);
-  game_state.dodge.render();
-  terminal.subViewPop();
+  if (0) {
+    terminal.color(3, 0);
+    terminal.cells({
+      x: view_kaboom.x - 1, y: view_kaboom.y - 1, ws: [MINIGAME_W], hs: [MINIGAME_H], charset: 1,
+      header: ' DODGE ',
+    });
+    terminal.subViewPush(view_kaboom);
+    game_state.dodge.update(dt);
+    game_state.dodge.render();
+    terminal.subViewPop();
+  } else {
+    terminal.color(3, 0);
+    terminal.cells({
+      x: view_kaboom.x - 1, y: view_kaboom.y - 1, ws: [MINIGAME_W], hs: [MINIGAME_H], charset: 1,
+      header: ' KABOOM ',
+    });
+    terminal.subViewPush(view_kaboom);
+    game_state.kaboom.update(dt);
+    game_state.kaboom.render();
+    terminal.subViewPop();
+  }
 
   terminal.color(3, 0);
   terminal.cells({

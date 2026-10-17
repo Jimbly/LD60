@@ -14,4 +14,4 @@ Acknowledgements:
 Start with: `npm start` (after running `npm i` once)
 
 TODO:
-* list here
+* gravity in Blocks for non-targets when things under them break
