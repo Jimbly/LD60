@@ -80,10 +80,17 @@ function randInt(range: number): number {
   return floor(random() * range);
 }
 
-const MINIGAME_W = 18;
+const MINIGAME_W = 18 + 2;
 const MINIGAME_H = 20;
 
-const BLOCK_COLORS = [12, 9, 14, 11];
+const BLOCK_COLORS = [15, 12, 9, 14, 11];
+const COLORBITS = 0xf;
+const TARGET = 1<<4;
+const INDESTRUCTIBLE = 1<<5;
+const BORDER = 1<<6;
+const HP_SHIFT = 7;
+const HP_MASK = 0x7;
+const HP = HP_MASK<<HP_SHIFT;
 
 const BREAKOUT_BLOCK_W = 4;
 
@@ -95,7 +102,7 @@ class BreakoutState {
   ball_dir!: JSVec2;
   player: number;
   player_width = 5;
-  block_xoffs = floor((this.w % BREAKOUT_BLOCK_W) / 2);
+  block_xoffs = 1 + floor(((this.w - 2) % BREAKOUT_BLOCK_W) / 2);
   newBall(): void {
     this.ball_pos = [round(this.player), this.h - 2];
     this.ball_dir = [0, -1];
@@ -119,7 +126,7 @@ class BreakoutState {
         row.push(0);
       }
       while (row.length + BREAKOUT_BLOCK_W < w) {
-        let color = 1 + randInt(BLOCK_COLORS.length);
+        let color = 1 + randInt(BLOCK_COLORS.length - 1);
         for (let ii = 0; ii < BREAKOUT_BLOCK_W; ++ii) {
           row.push(color);
         }
@@ -127,6 +134,7 @@ class BreakoutState {
       while (row.length < w) {
         row.push(0);
       }
+      row.pop();
       board.push(row);
     }
     while (board.length < h) {
@@ -136,6 +144,15 @@ class BreakoutState {
       }
       board.push(row);
     }
+
+    for (let yy = 0; yy < h; ++yy) {
+      let v = (yy === 0 || yy > h*0.667) ?
+        INDESTRUCTIBLE | BORDER :
+        (3<<HP_SHIFT) | BORDER;
+      v |= 4;
+      board[yy][0] = v;
+      board[yy][w-1] = v;
+    }
     this.player = this.w / 2;
     this.newBall();
   }
@@ -144,10 +161,10 @@ class BreakoutState {
     let { ball_pos, ball_dir, w, h, player_width, board, block_xoffs } = this;
     let spd = dt * 0.01;
     if (actionDown('left')) {
-      this.player = max((this.player_width - 1) / 2, this.player - spd);
+      this.player = max((this.player_width - 1) / 2 + 1, this.player - spd);
     }
     if (actionDown('right')) {
-      this.player = min(this.w - (this.player_width - 1) / 2 - 1, this.player + spd);
+      this.player = min(this.w - (this.player_width - 1) / 2 - 2, this.player + spd);
     }
     let old_bx = round(ball_pos[0]);
     let old_by = round(ball_pos[1]);
@@ -168,7 +185,7 @@ class BreakoutState {
     }
     let bx = round(ball_pos[0]);
     let by = round(ball_pos[1]);
-    let player0 = round(this.player - player_width/2);
+    let player0 = round(this.player - (player_width - 1)/2);
     if (bx !== old_bx || by !== old_by) {
       if (by === h - 1) {
         if (
@@ -184,10 +201,24 @@ class BreakoutState {
       } else if (by === h) {
         this.newBall();
       } else {
-        if (board[by]?.[bx]) {
-          let blockx = floor((bx - block_xoffs) / BREAKOUT_BLOCK_W) * BREAKOUT_BLOCK_W + block_xoffs;
-          for (let ii = 0; ii < BREAKOUT_BLOCK_W; ++ii) {
-            board[by][blockx + ii] = 0;
+        let v = board[by]?.[bx];
+        if (v) {
+          if (!(v & INDESTRUCTIBLE)) {
+            let newv = 0;
+            if (v & HP) {
+              let hp = (v & HP) >> HP_SHIFT;
+              hp--;
+              if (hp) {
+                newv = (v & ~HP) | (hp << HP_SHIFT);
+              }
+            }
+            let blockx = floor((bx - block_xoffs) / BREAKOUT_BLOCK_W) * BREAKOUT_BLOCK_W + block_xoffs;
+            for (let ii = 0; ii < BREAKOUT_BLOCK_W; ++ii) {
+              let xx = blockx + ii;
+              if (board[by][xx]) {
+                board[by][xx] = newv;
+              }
+            }
           }
           if (bx !== old_bx) {
             ball_dir[0] *= -1;
@@ -203,22 +234,41 @@ class BreakoutState {
     v2iNormalize(ball_dir);
   }
   render(): void {
-    terminal.color(7, 0);
-    terminal.clear();
+    terminal.normal();
+    terminal.fill({
+      x: 1, y: 0, w: MINIGAME_W - 2, h: MINIGAME_H,
+    });
     let { h, board, ball_pos, player, player_width } = this;
     for (let yy = 0; yy < board.length; ++yy) {
       let row = board[yy];
       for (let xx = 0; xx < row.length; ++xx) {
-        if (row[xx]) {
+        let v = row[xx];
+        if (v) {
+          if ((v & BORDER) && (v & INDESTRUCTIBLE)) {
+            continue;
+          }
+          let ch = (v & INDESTRUCTIBLE) ? '▓' : '█';
+          let hp = (v & HP) >> HP_SHIFT;
+          let fg = BLOCK_COLORS[v & COLORBITS];
+          let bg = BLOCK_COLORS[v & COLORBITS] - 8;
+          if (v & BORDER) {
+            bg = 0;
+            ch = hp === 3 ? '║' : '│';
+            if (hp === 1) {
+              fg -= 8;
+            }
+          }
           terminal.print({
             x: xx,
             y: yy,
-            fg: BLOCK_COLORS[row[xx] - 1],
-            text: '█',
+            fg,
+            bg,
+            text: ch,
           });
         }
       }
     }
+    terminal.normal();
     let player_str = ['\x11'];
     for (let ii = 0; ii < player_width - 2; ++ii) {
       player_str.push('═');
@@ -302,8 +352,10 @@ class DodgeState {
 
   }
   render(): void {
-    terminal.color(7, 0);
-    terminal.clear();
+    terminal.normal();
+    terminal.fill({
+      x: 1, y: 0, w: MINIGAME_W - 2, h: MINIGAME_H,
+    });
     let { player, h, w, board } = this;
     terminal.print({
       x: round(player),
@@ -334,7 +386,6 @@ class DodgeState {
   }
 }
 
-const TARGET = 100;
 const MATCH_LEN = 2;
 function matches(color: number, block: number): boolean {
   return block === color || block === color + TARGET;
@@ -435,7 +486,7 @@ class BlocksState {
         if (logic_board[y][x]) {
           continue;
         }
-        this.setBoard(x, y, TARGET + randInt(num_blocks) + 1);
+        this.setBoard(x, y, TARGET | (randInt(num_blocks) + 1));
         break;
       }
     }
@@ -470,11 +521,13 @@ class BlocksState {
     pos[1] += dt * 0.002;
     if (actionEdge('down', { peek: true })) {
       pos[1] = old_py + 1;
+      pos[1] = floor(pos[1]);
     }
     if (actionDown('down')) {
       this.down_time += dt;
       if (this.down_time > 140) {
         pos[1] = old_py + 1;
+        pos[1] = floor(pos[1]);
         this.down_time -= 140;
       }
     } else {
@@ -495,10 +548,12 @@ class BlocksState {
     }
   }
   render(): void {
-    terminal.color(7, 0);
-    terminal.clear();
+    terminal.normal();
+    terminal.fill({
+      x: 1, y: 0, w: MINIGAME_W - 2, h: MINIGAME_H,
+    });
     let { pos, block, board, h } = this;
-    let fg = BLOCK_COLORS[block - 1];
+    let fg = BLOCK_COLORS[block];
     terminal.print({
       x: round(pos[0]) * 2,
       y: floor(pos[1]),
@@ -507,18 +562,17 @@ class BlocksState {
       text: '▒▒',
     });
 
-    terminal.color(7, 0);
+    terminal.normal();
     for (let yy = 0; yy < h; ++yy) {
       let row = board[yy];
       for (let xx = 0; xx < row.length; ++xx) {
-        let cell = row[xx];
-        if (cell) {
-          let color = cell > TARGET ? cell - TARGET : cell;
+        let v = row[xx];
+        if (v) {
           terminal.print({
             x: xx,
             y: yy,
-            fg: BLOCK_COLORS[color - 1],
-            text: cell > TARGET ? '▒' : '█',
+            fg: BLOCK_COLORS[v & COLORBITS],
+            text: (v & TARGET) ? '▒' : '█',
           });
         }
       }
@@ -731,8 +785,10 @@ class InvadersState {
     }
   }
   render(): void {
-    terminal.color(7, 0);
-    terminal.clear();
+    terminal.normal();
+    terminal.fill({
+      x: 1, y: 0, w: MINIGAME_W - 2, h: MINIGAME_H,
+    });
     let { invaders, invader_bullets, player_bullets, player, w, h } = this;
 
     // terminal.print({
@@ -802,7 +858,7 @@ class KaboomState {
       let row: number[] = [];
       this.board.push(row);
       for (let xx = 0; xx < w/2; ++xx) {
-        let color = yy >= h - 2 ? randInt(BLOCK_COLORS.length) + 1 : 0;
+        let color = yy >= h - 2 ? randInt(BLOCK_COLORS.length - 1) + 1 : 0;
         row.push(color, color);
       }
     }
@@ -884,8 +940,10 @@ class KaboomState {
     }
   }
   render(): void {
-    terminal.color(7, 0);
-    terminal.clear();
+    terminal.normal();
+    terminal.fill({
+      x: 1, y: 0, w: MINIGAME_W - 2, h: MINIGAME_H,
+    });
     let { bullets, player, player_width, enemy, py, board, w, h } = this;
 
     let px = round(player - (player_width - 1) / 2);
@@ -922,14 +980,13 @@ class KaboomState {
     for (let yy = 0; yy < h; ++yy) {
       let row = board[yy];
       for (let xx = 0; xx < w; ++xx) {
-        let cell = row[xx];
-        if (cell) {
-          let color = cell > TARGET ? cell - TARGET : cell;
+        let v = row[xx];
+        if (v) {
           terminal.print({
             x: xx,
             y: yy,
-            fg: BLOCK_COLORS[color - 1],
-            text: cell > TARGET ? '▒' : '█',
+            fg: BLOCK_COLORS[v & COLORBITS],
+            text: (v & TARGET) ? '▒' : '█',
           });
         }
       }
@@ -967,64 +1024,57 @@ export function setScore(): void {
   score_system.setScore(0, score);
 }
 
-let view_x = 2;
+let view_x = 1;
 let view_invaders = { x: view_x, y: 1, w: MINIGAME_W, h: MINIGAME_H };
-view_x += MINIGAME_W + 1;
+view_x += MINIGAME_W - 1;
 let view_breakout = { x: view_x, y: 1, w: MINIGAME_W, h: MINIGAME_H };
-view_x += MINIGAME_W + 1;
+view_x += MINIGAME_W - 1;
 let view_blocks = { x: view_x, y: 1, w: MINIGAME_W, h: MINIGAME_H };
-view_x += MINIGAME_W + 1;
+view_x += MINIGAME_W - 1;
 let view_kaboom = { x: view_x, y: 1, w: MINIGAME_W, h: MINIGAME_H };
-view_x += MINIGAME_W + 1;
+view_x += MINIGAME_W - 1;
 function statePlay(dt: number): void {
   terminal.auto_scroll = false;
-  terminal.color(3, 0);
+  terminal.color(11, 0);
   terminal.cells({
-    x: view_breakout.x - 1, y: view_breakout.y - 1, ws: [MINIGAME_W], hs: [MINIGAME_H], charset: 1,
+    x: view_breakout.x, y: view_breakout.y - 1, ws: [MINIGAME_W - 2], hs: [MINIGAME_H], charset: 1,
     header: ' BREAKOUT ',
   });
+  terminal.cells({
+    x: view_kaboom.x, y: view_kaboom.y - 1, ws: [MINIGAME_W - 2], hs: [MINIGAME_H], charset: 1,
+    header: ' KABOOM ',
+  });
+  terminal.cells({
+    x: view_blocks.x, y: view_blocks.y - 1, ws: [MINIGAME_W - 2], hs: [MINIGAME_H], charset: 1,
+    header: ' BLOCKS ',
+  });
+  terminal.cells({
+    x: view_invaders.x, y: view_invaders.y - 1, ws: [MINIGAME_W - 2], hs: [MINIGAME_H], charset: 1,
+    header: ' INVADERS ',
+  });
+
   terminal.subViewPush(view_breakout);
   game_state.breakout.update(dt);
   game_state.breakout.render();
   terminal.subViewPop();
 
   if (0) {
-    terminal.color(3, 0);
-    terminal.cells({
-      x: view_kaboom.x - 1, y: view_kaboom.y - 1, ws: [MINIGAME_W], hs: [MINIGAME_H], charset: 1,
-      header: ' DODGE ',
-    });
     terminal.subViewPush(view_kaboom);
     game_state.dodge.update(dt);
     game_state.dodge.render();
     terminal.subViewPop();
   } else {
-    terminal.color(3, 0);
-    terminal.cells({
-      x: view_kaboom.x - 1, y: view_kaboom.y - 1, ws: [MINIGAME_W], hs: [MINIGAME_H], charset: 1,
-      header: ' KABOOM ',
-    });
     terminal.subViewPush(view_kaboom);
     game_state.kaboom.update(dt);
     game_state.kaboom.render();
     terminal.subViewPop();
   }
 
-  terminal.color(3, 0);
-  terminal.cells({
-    x: view_blocks.x - 1, y: view_blocks.y - 1, ws: [MINIGAME_W], hs: [MINIGAME_H], charset: 1,
-    header: ' BLOCKS ',
-  });
   terminal.subViewPush(view_blocks);
   game_state.blocks.update(dt);
   game_state.blocks.render();
   terminal.subViewPop();
 
-  terminal.color(3, 0);
-  terminal.cells({
-    x: view_invaders.x - 1, y: view_invaders.y - 1, ws: [MINIGAME_W], hs: [MINIGAME_H], charset: 1,
-    header: ' INVADERS ',
-  });
   terminal.subViewPush(view_invaders);
   game_state.invaders.update(dt);
   game_state.invaders.render();
@@ -1138,148 +1188,6 @@ export function main(): void {
   // Perfect sizes for pixely modes
   scaleSizes(13 / 32);
   setFontHeight(16);
-
-  // let rpgdata;
-  // const RPG_BODY_W = 60-2;
-  // const RPG_STATUS_W = 20-2;
-  // const RPG_STATUS_H = 3;
-  // const RPG_STATUS_X = RPG_BODY_W + 2;
-  // let rpgsubview;
-  // function rpgText(text) {
-  //   terminal.subViewPush(rpgsubview);
-  //   terminal.print({
-  //     text: text,
-  //   });
-  //   terminal.subViewPop();
-  // }
-  // const RPG_STATES = {
-  //   town: {
-  //     enter: function () {
-  //       rpgText('You stand in the town square, ready for adventure!  Or,\r\nperhaps, a break.\r\n');
-  //     },
-  //     menu: {
-  //       '[1] Visit the Inn': 'inn',
-  //       '[2] Fight a Monster': 'fight',
-  //     },
-  //   },
-  //   inn: {
-  //     enter: function () {
-  //       rpgText('You rest, and are healed.\r\n\r\n');
-  //       rpgdata.hp = rpgdata.maxhp;
-  //       rpgState('town');
-  //     },
-  //   },
-  //   fight: {
-  //     enter: function () {
-  //       rpgText('You head into the forest to fight...\r\n');
-  //       let damage = floor(random() * random() * 50);
-  //       if (damage) {
-  //         rpgText(`You take ${ansi.red(damage)} damage.\r\n`);
-  //         rpgdata.hp -= damage;
-  //       } else {
-  //         rpgText('You escape unscathed.\r\n');
-  //       }
-  //       let gp = floor(random() * 20);
-  //       rpgText(`You find ${ansi.yellow.bright(gp)} GP.\r\n`);
-  //       rpgdata.gp += gp;
-  //       rpgText('\r\n');
-  //       rpgState('town');
-  //     },
-  //   },
-  // };
-  // function rpgState(state) {
-  //   let st = RPG_STATES[state];
-  //   rpgdata.state = state;
-
-  //   st.enter();
-  //   if (rpgdata.state !== state) {
-  //     // already left
-  //     return;
-  //   }
-  //   terminal.subViewPush(rpgsubview);
-  //   if (st.menu) {
-  //     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  //     for (let key in st.menu) {
-  //       terminal.print({ text: '\n' });
-  //     }
-  //     terminal.print({ text: '> ' });
-  //   }
-
-  //   terminal.subViewPop();
-  //   rpgdata.menu_cursor_x = rpgsubview.cursor_x;
-  //   rpgdata.menu_cursor_y = rpgsubview.cursor_y;
-  //   rpgdata.menu_x = rpgsubview.x;
-  //   rpgdata.menu_y = rpgsubview.cursor_y - Object.keys(st.menu).length;
-  // }
-  // function rpgInit() {
-  //   rpgdata = {
-  //     hp: 100,
-  //     maxhp: 100,
-  //     gp: 0,
-  //   };
-  //   rpgsubview = {
-  //     x: 1, y: 1, w: RPG_BODY_W, h: 23,
-  //     cursor_x: 1, cursor_y: 1,
-  //   };
-  //   terminal.color(7,0);
-  //   terminal.clear();
-
-  //   terminal.color(4,0);
-  //   terminal.cells({
-  //     x: 0, y: 0, ws: [RPG_BODY_W], hs: [23], charset: 1,
-  //     header: ' THE RPG ',
-  //   });
-  //   terminal.color(2,0);
-  //   terminal.cells({
-  //     x: RPG_STATUS_X, y: 0, ws: [RPG_STATUS_W], hs: [RPG_STATUS_H], charset: 0,
-  //     header: ' Status ',
-  //   });
-  //   terminal.color(7,0);
-  //   rpgState('town');
-  // }
-  // function rpg(dt) {
-
-  //   function drawStatus() {
-  //     let health_percent = rpgdata.hp / rpgdata.maxhp;
-  //     let health_color = health_percent < 0.5 ? 'red' : 'green';
-  //     terminal.print({
-  //       x: RPG_STATUS_X + 2,
-  //       y: 1,
-  //       fg: 2,
-  //       text: padRight(`HP: ${ansi[health_color].bright(`${rpgdata.hp} / ${rpgdata.maxhp}`)}  `, RPG_STATUS_W - 2),
-  //     });
-  //     terminal.print({
-  //       x: RPG_STATUS_X + 2,
-  //       y: 2,
-  //       fg: 2,
-  //       text: padRight(`GP: ${ansi.yellow.bright(rpgdata.gp)}  `, RPG_STATUS_W - 2),
-  //     });
-  //   }
-
-  //   drawStatus();
-
-  //   let st = RPG_STATES[rpgdata.state];
-  //   if (st && st.menu) {
-  //     if (!st.menu_keys) {
-  //       st.menu_keys = Object.keys(st.menu);
-  //     }
-  //     let ret = terminal.menu({
-  //       pre_sel: ' ■ ',
-  //       pre_unsel: '   ',
-  //       x: rpgdata.menu_x,
-  //       y: rpgdata.menu_y,
-  //       items: st.menu_keys,
-  //     });
-  //     terminal.moveto(rpgdata.menu_cursor_x, rpgdata.menu_cursor_y);
-  //     if (ret !== -1) {
-  //       rpgText(`${st.menu_keys[ret]}\r\n`);
-  //       // TODO: transition to new state
-  //       rpgState(st.menu[st.menu_keys[ret]]);
-  //     }
-  //   }
-
-  //   terminal.render();
-  // }
 
   init();
 
