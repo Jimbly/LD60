@@ -11,6 +11,7 @@ import {
   startup as engineStartup,
   setState,
 } from 'glov/client/engine';
+import { keyDown, KEYS } from 'glov/client/input';
 import { localStorageGet, localStorageGetJSON, localStorageSetJSON } from 'glov/client/local_storage';
 import { netInit } from 'glov/client/net';
 import { scoreAlloc, ScoreSystem } from 'glov/client/score';
@@ -156,7 +157,7 @@ function gameStateRenderEarly(state: GameState): void {
 }
 
 function gameStateRenderLate(state: GameState): void {
-  let { bullets } = state;
+  let { balls, bullets } = state;
   for (let ii = 0; ii < bullets.length; ++ii) {
     let b = bullets[ii];
     terminal.print({
@@ -166,20 +167,39 @@ function gameStateRenderLate(state: GameState): void {
       text: BULLET_CH[b.type],
     });
   }
+
+  for (let ii = 0; ii < balls.length; ++ii) {
+    let ball = balls[ii];
+    let { pos: ball_pos } = ball;
+    let by = round(ball_pos[1]);
+    let fpart = ball_pos[1] - by;
+    terminal.print({
+      x: round(ball_pos[0]),
+      y: by,
+      fg: 10,
+      // text: fpart < -0.1667 ? '▀' : fpart > 0.1667 ? '▄' : '■',
+      text: fpart < 0 ? '▀' : '▄',
+    });
+  }
 }
+
+type Ball = {
+  pos: JSVec2;
+  dir: JSVec2;
+};
 
 class BreakoutState {
   board: Board;
   w = MINIGAME_W;
   h = MINIGAME_H;
-  ball_pos!: JSVec2;
-  ball_dir!: JSVec2;
   player: number;
   player_width = 5;
   block_xoffs = 1 + floor((this.w % BREAKOUT_BLOCK_W) / 2);
   newBall(): void {
-    this.ball_pos = [round(this.player) + this.xoffs, this.h - 2];
-    this.ball_dir = [0, -1];
+    this.state.balls.push({
+      pos: [round(this.player) + this.xoffs, this.h - 2],
+      dir: [MODE_DEVELOPMENT ? -1 : 0, -1],
+    });
   }
   xoffs: number;
   state: GameState;
@@ -209,103 +229,99 @@ class BreakoutState {
   }
 
   update(dt: number): void {
-    let { xoffs, ball_pos, ball_dir, w, h, player_width, board } = this;
+    let { xoffs, state, w, h, player_width, board } = this;
+    let { balls } = state;
     let spd = dt * 0.01;
     if (actionDown('left')) {
       this.player = max((this.player_width - 1) / 2 + 1, this.player - spd);
     }
     if (actionDown('right')) {
-      this.player = min(w - (this.player_width - 1) / 2 - 2, this.player + spd);
+      this.player = min(w - (this.player_width - 1) / 2, this.player + spd);
     }
-    let old_bx = round(ball_pos[0]);
-    let old_by = round(ball_pos[1]);
-    let ball_spd = dt * 0.007;
-    ball_pos[0] += ball_dir[0] * ball_spd * 2;
-    ball_pos[1] += ball_dir[1] * ball_spd;
-    if (ball_pos[0] < 0) {
-      ball_pos[0] = 0 - ball_pos[0];
-      ball_dir[0] *= -1;
-    }
-    let totalw = board[0].length;
-    if (ball_pos[0] > totalw-1) {
-      ball_pos[0] = totalw-1 - (ball_pos[0] - (totalw-1));
-      ball_dir[0] *= -1;
-    }
-    if (ball_pos[1] < 0) {
-      ball_pos[1] = 0 - ball_pos[1];
-      ball_dir[1] *= -1;
-    }
-    let bx = round(ball_pos[0]);
-    let by = round(ball_pos[1]);
-    let player0 = round(this.player - (player_width - 1)/2) + xoffs;
-    if (bx !== old_bx || by !== old_by) {
-      if (by === h - 1) {
-        if (
-          bx >= player0 &&
-          bx < player0 + player_width
-        ) {
-          ball_dir[1] *= -1;
-          ball_pos[1] = min(ball_pos[1], h - 2.5);
-          let impact = clamp((ball_pos[0] - (this.player + xoffs)) / (player_width / 2), -1, 1);
-          impact *= 0.8;
-          let vec = [sin(PI/2 * impact), -cos(PI/2 * impact)] as const;
-          v2lerp(ball_dir, abs(impact) * 0.75, ball_dir, vec);
-        }
-      } else if (by === h) {
-        this.newBall();
-      } else {
-        let v = board[by]?.[bx];
-        if (v) {
-          if (!(v & INDESTRUCTIBLE)) {
-            let newv = 0;
-            if (v & HP) {
-              let hp = (v & HP) >> HP_SHIFT;
-              hp--;
-              if (hp) {
-                newv = (v & ~HP) | (hp << HP_SHIFT);
-              }
-            }
-            let block_w = (v & QUADRUPLE) ? 4 : (v & DOUBLE) ? 2 : 1;
-            let block_xoffs = (v >> XOFFS_SHIFT) & 3;
-            let blockx = floor((bx - block_xoffs) / block_w) * block_w + block_xoffs;
-            for (let ii = 0; ii < block_w; ++ii) {
-              let xx = blockx + ii;
-              if (board[by][xx]) {
-                board[by][xx] = newv;
-              }
-            }
-          }
-          if (bx !== old_bx) {
-            ball_dir[0] *= -1;
-            ball_pos[0] += 2 * ((min(bx, old_bx) + 0.5) - ball_pos[0]);
-          }
-          if (by !== old_by) {
+    for (let ball_idx = balls.length - 1; ball_idx >= 0; --ball_idx) {
+      let ball = balls[ball_idx];
+      let { pos: ball_pos, dir: ball_dir } = ball;
+      let old_bx = round(ball_pos[0]);
+      let old_by = round(ball_pos[1]);
+      let ball_spd = dt * 0.007;
+      ball_pos[0] += ball_dir[0] * ball_spd * 2;
+      ball_pos[1] += ball_dir[1] * ball_spd;
+      if (ball_pos[0] < 0) {
+        ball_pos[0] = 0 - ball_pos[0];
+        ball_dir[0] *= -1;
+      }
+      let totalw = board[0].length;
+      if (ball_pos[0] > totalw-1) {
+        ball_pos[0] = totalw-1 - (ball_pos[0] - (totalw-1));
+        ball_dir[0] *= -1;
+      }
+      if (ball_pos[1] < 0) {
+        ball_pos[1] = 0 - ball_pos[1];
+        ball_dir[1] *= -1;
+      }
+      let bx = round(ball_pos[0]);
+      let by = round(ball_pos[1]);
+      let player0 = round(this.player - (player_width - 1)/2) + xoffs;
+      if (bx !== old_bx || by !== old_by) {
+        if (by === h - 1) {
+          if (
+            bx >= player0 &&
+            bx < player0 + player_width
+          ) {
             ball_dir[1] *= -1;
-            ball_pos[1] += 2 * ((min(by, old_by) + 0.5) - ball_pos[1]);
+            ball_pos[1] = min(ball_pos[1], h - 2.5);
+            let impact = clamp((ball_pos[0] - (this.player + xoffs)) / (player_width / 2), -1, 1);
+            impact *= 0.8;
+            let vec = [sin(PI/2 * impact), -cos(PI/2 * impact)] as const;
+            v2lerp(ball_dir, abs(impact) * 0.75, ball_dir, vec);
+          }
+        } else if (by === h) {
+          ridx(balls, ball_idx);
+          this.newBall();
+        } else {
+          let v = board[by]?.[bx];
+          if (v) {
+            if (!(v & INDESTRUCTIBLE)) {
+              let newv = 0;
+              if (v & HP) {
+                let hp = (v & HP) >> HP_SHIFT;
+                hp--;
+                if (hp) {
+                  newv = (v & ~HP) | (hp << HP_SHIFT);
+                }
+              }
+              let block_w = (v & QUADRUPLE) ? 4 : (v & DOUBLE) ? 2 : 1;
+              let block_xoffs = (v >> XOFFS_SHIFT) & 3;
+              let blockx = floor((bx - block_xoffs) / block_w) * block_w + block_xoffs;
+              for (let ii = 0; ii < block_w; ++ii) {
+                let xx = blockx + ii;
+                if (board[by][xx]) {
+                  board[by][xx] = newv;
+                }
+              }
+            }
+            if (bx !== old_bx) {
+              ball_dir[0] *= -1;
+              ball_pos[0] += 2 * ((min(bx, old_bx) + 0.5) - ball_pos[0]);
+            }
+            if (by !== old_by) {
+              ball_dir[1] *= -1;
+              ball_pos[1] += 2 * ((min(by, old_by) + 0.5) - ball_pos[1]);
+            }
           }
         }
       }
+      v2iNormalize(ball_dir);
     }
-    v2iNormalize(ball_dir);
   }
   render(): void {
-    let { xoffs, h, ball_pos, player, player_width } = this;
+    let { xoffs, h, player, player_width } = this;
     terminal.normal();
     let player_str = ['\x11'];
     for (let ii = 0; ii < player_width - 2; ++ii) {
       player_str.push('═');
     }
     player_str.push('\x10');
-
-    let by = round(ball_pos[1]);
-    let fpart = ball_pos[1] - by;
-    terminal.print({
-      x: round(ball_pos[0]),
-      y: by,
-      fg: 10,
-      // text: fpart < -0.1667 ? '▀' : fpart > 0.1667 ? '▄' : '■',
-      text: fpart < 0 ? '▀' : '▄',
-    });
 
     terminal.print({
       x: round(player) - (player_width - 1) / 2 + xoffs,
@@ -600,7 +616,7 @@ class BlocksState {
 }
 
 const INVADER_PAD = 3;
-const NUM_INVADERS = 20;
+const NUM_INVADERS = 18;
 const INVADER_MOVE_TIME = 1000;
 const INVADER_SHOOT_TIME = INVADER_MOVE_TIME * 3;
 const INVADER_BULLET_TIME = 250;
@@ -627,7 +643,7 @@ class InvadersState {
     this.state.clearBullets('invader_player');
     this.state.clearBullets('invader_enemy');
     this.invaders = [];
-    let { invaders, w } = this;
+    let { invaders, w, xoffs } = this;
     let xx = INVADER_PAD;
     let yy = 0;
     let opts = ['\x0f', '\x15'];
@@ -639,11 +655,33 @@ class InvadersState {
         yy++;
       }
     }
+    this.state.clearBoard(xoffs);
+    this.placeInvaders();
     this.move_counter = INVADER_MOVE_TIME;
     this.move_dir = 1;
     this.shoot_counter = INVADER_SHOOT_TIME;
     this.shoot_idx = 0;
     this.player_shoot_counter = PLAYER_SHOOT_TIME / 2 + INVADER_BULLET_TIME / 2;
+  }
+  removeInvaders(): void {
+    let { invaders, state, xoffs } = this;
+    let { board } = state;
+    for (let ii = invaders.length - 1; ii >= 0; --ii) {
+      let invader = invaders[ii];
+      if (board[invader[1]][invader[0] + xoffs]) {
+        board[invader[1]][invader[0] + xoffs] = 0;
+      } else {
+        invaders.splice(ii, 1);
+      }
+    }
+  }
+  placeInvaders(): void {
+    let { invaders, state, xoffs } = this;
+    let { board } = state;
+    for (let ii = 0; ii < invaders.length; ++ii) {
+      let invader = invaders[ii];
+      board[invader[1]][invader[0] + xoffs] = 1;
+    }
   }
   died(): void {
     this.newBoard();
@@ -656,6 +694,7 @@ class InvadersState {
     if (this.move_counter > 0) {
       return;
     }
+    this.removeInvaders();
     this.move_counter += INVADER_MOVE_TIME;
     let { invaders, move_dir, w, h } = this;
     let bounce = false;
@@ -682,6 +721,7 @@ class InvadersState {
         dead = true;
       }
     }
+    this.placeInvaders();
     if (dead) {
       this.newBoard();
     }
@@ -783,12 +823,14 @@ class InvadersState {
       }
       return ret;
     }
+    this.removeInvaders();
     for (let ii = invaders.length - 1; ii >= 0; --ii) {
       let item = invaders[ii];
       if (checkHit(item[0], item[1])) {
         invaders.splice(ii, 1);
       }
     }
+    this.placeInvaders();
     for (let ii = 0; ii < bullets.length; ++ii) {
       let b = bullets[ii];
       if (b.type === 'invader_enemy') {
@@ -1020,6 +1062,7 @@ class GameState {
   blocks!: BlocksState;
   kaboom!: KaboomState;
   bullets!: Bullet[];
+  balls!: Ball[];
   constructor() {
     this.initBoard();
   }
@@ -1030,6 +1073,7 @@ class GameState {
     let c1 = MINIGAME_W + 1;
     let c2 = (MINIGAME_W + 1) * 2;
     let c3 = (MINIGAME_W + 1) * 3;
+    const INITIAL_HP = MODE_DEVELOPMENT ? 0 : 3;
     for (let yy = 0; yy < MINIGAME_H; ++yy) {
       let row: number[] = [];
       board.push(row);
@@ -1041,13 +1085,17 @@ class GameState {
           v = BORDER;
           v |= (yy === 0 || yy > MINIGAME_H*0.667) ?
             INDESTRUCTIBLE :
-            (3<<HP_SHIFT);
+            (INITIAL_HP<<HP_SHIFT);
           v |= BORDER_BLOCK;
+          if (!INITIAL_HP) {
+            v = 0;
+          }
         }
         row.push(v);
       }
     }
     this.bullets = [];
+    this.balls = [];
     this.invaders = new InvadersState(0, this);
     this.breakout = new BreakoutState(MINIGAME_W + 1, this);
     this.blocks = new BlocksState((MINIGAME_W + 1) * 2, this);
@@ -1056,6 +1104,20 @@ class GameState {
 
   update(dt: number): void {
     this.updateBullets(dt);
+  }
+  updateLate(dt: number): void {
+    let { bullets, balls } = this;
+    let ball_pos: Rec<number, Ball> = {};
+    for (let ii = 0; ii < balls.length; ++ii) {
+      let ball = balls[ii];
+      ball_pos[round(ball.pos[0]) + round(ball.pos[1]) * 100] = ball;
+    }
+    for (let ii = bullets.length - 1; ii >= 0; --ii) {
+      let b = bullets[ii];
+      if (ball_pos[b.x + b.y * 100]) {
+        ridx(bullets, ii);
+      }
+    }
   }
   updateBullets(dt: number): void {
     let { bullets } = this;
@@ -1076,6 +1138,14 @@ class GameState {
     for (let ii = bullets.length - 1; ii >= 0; --ii) {
       if (bullets[ii].type === type) {
         ridx(bullets, ii);
+      }
+    }
+  }
+  clearBoard(xoffs: number): void {
+    let { board } = this;
+    for (let yy = 0; yy < MINIGAME_H; ++yy) {
+      for (let xx = 0; xx < MINIGAME_W; ++xx) {
+        board[yy][xx + xoffs] = 0;
       }
     }
   }
@@ -1107,6 +1177,9 @@ view_x += MINIGAME_W + 1;
 let view_kaboom = { x: view_x, y: 1, w: MINIGAME_W, h: MINIGAME_H };
 view_x += MINIGAME_W + 1;
 function statePlay(dt: number): void {
+  if (MODE_DEVELOPMENT && keyDown(KEYS.SHIFT)) {
+    dt *= 3;
+  }
   terminal.auto_scroll = false;
   terminal.color(11, 0);
   terminal.cells({
@@ -1126,31 +1199,28 @@ function statePlay(dt: number): void {
     header: ' INVADERS ',
   });
 
-  terminal.subViewPush(view_board);
   game_state.update(dt);
+  game_state.invaders.update(dt);
+  game_state.breakout.update(dt);
+  game_state.kaboom.update(dt);
+  game_state.blocks.update(dt);
+  game_state.updateLate(dt);
+
+  terminal.subViewPush(view_board);
   gameStateRenderEarly(game_state);
   terminal.subViewPop();
-
   terminal.subViewPush(view_board);
-  game_state.invaders.update(dt);
   game_state.invaders.render();
   terminal.subViewPop();
-
   terminal.subViewPush(view_board);
-  game_state.breakout.update(dt);
   game_state.breakout.render();
   terminal.subViewPop();
-
   terminal.subViewPush(view_kaboom);
-  game_state.kaboom.update(dt);
   game_state.kaboom.render();
   terminal.subViewPop();
-
   terminal.subViewPush(view_blocks);
-  game_state.blocks.update(dt);
   game_state.blocks.render();
   terminal.subViewPop();
-
   terminal.subViewPush(view_board);
   gameStateRenderLate(game_state);
   terminal.subViewPop();
