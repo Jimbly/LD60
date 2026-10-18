@@ -1,7 +1,9 @@
 Ludum Dare 60 - "Old Tech"
 ============================
 
-Ludum Dare 60 Entry by Jimbly - "Game Title"
+Ludum Dare 60 Entry by Jimbly - "Dr Break Boom Invaders"
+
+An unholy amalgamation of Dr Mario, Breakout, Kaboom, and Space Invaders
 
 * Play here: [dashingstrike.com/LudumDare/LD60/](http://www.dashingstrike.com/LudumDare/LD60/)
 * Using [Javascript libGlov/GLOV.js framework](https://github.com/Jimbly/glovjs)
@@ -14,7 +16,8 @@ Acknowledgements:
 Start with: `npm start` (after running `npm i` once)
 
 TODO:
-* title screen
+* extra lives: every 200, 300, etc, pts
 * flash board when losing a ball
 * score floaters
+  * similar floaters for showing blocks removed, invaders killed, etc
 * fix T-junctions on borders during all phases

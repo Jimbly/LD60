@@ -20,7 +20,7 @@ import { scoreAlloc, ScoreSystem } from 'glov/client/score';
 import { scoresDraw } from 'glov/client/score_ui';
 import { spriteSetGet } from 'glov/client/sprite_sets';
 import { ansi_to_unicode_a, terminalCreate } from 'glov/client/terminal';
-import { terminalSettingsInit, terminalSettingsShow } from 'glov/client/terminal_settings';
+import { terminalSettingsInit, terminalSettingsShow, terminalSettingsVisible } from 'glov/client/terminal_settings';
 import {
   buttonText,
   drawRect,
@@ -1952,6 +1952,9 @@ function statePlay(dt: number): void {
   if (MODE_DEVELOPMENT && keyDown(KEYS.SHIFT)) {
     dt *= 4;
   }
+  if (terminalSettingsVisible()) {
+    dt = 0;
+  }
   terminal.auto_scroll = false;
   terminal.color(11, 0);
   for (let ii = 0; ii < views.length; ++ii) {
@@ -2071,30 +2074,34 @@ function stateScores(dt: number): void {
   }
 }
 
-const MENU_W = 20;
-const MENU_X = floor((WINCHS - MENU_W) / 2);
-const MENU_Y = 16;
+const MENU_W = 23;
+const MENU_X = floor((WINCHS - MENU_W) / 2) - 1;
+const MENU_Y = 11;
 
+let menu_ready = false;
 function menu(dt: number): void {
-  let sel = terminal.menu({
+  if (!terminal.isAnimating()) {
+    menu_ready = true;
+  }
+  let sel = !menu_ready ? -1 : terminal.menu({
     pre_sel: ' ■ ',
     pre_unsel: '   ',
     x: MENU_X,
     y: MENU_Y,
     items: [
-      'New Game       ',
-      ...(game_state ? ['Continue       '] : []),
-      `${ansi.yellow.bright('[O]')}ptions      `,
-      'High Scores    ',
+      ...(game_state ? ['Continue          '] : []),
+      'New Game          ',
+      `${ansi.yellow.bright('[O]')}ptions         `,
+      'High Scores       ',
     ],
   });
 
   switch (sel) { // eslint-disable-line default-case
-    case 0:
-      newGameInit();
-      break;
-    case game_state ? 1 : -999:
+    case game_state ? 0 : -999:
       backToGame();
+      break;
+    case game_state ? 1 : 0:
+      newGameInit();
       break;
     case game_state ? 2 : 1:
       terminalSettingsShow();
@@ -2107,13 +2114,68 @@ function menu(dt: number): void {
   terminal.render();
 }
 
+/* eslint @stylistic/max-len:off */
+const TITLE = `[?7h[255D[0;1;34mÛÛÛÛÛÛ[30m»  [34mÛÛÛÛÛÛ[30m»[9C[36mÛÛÛÛÛÛ[30m»  [36mÛÛÛÛÛÛ[30m»  [36mÛÛÛÛÛÛÛ[30m»  [36mÛÛÛÛÛ[30m»  [36mÛÛ[30m»  [36mÛÛ[30m»
+[34mÛÛ[30mÉÍÍ[34mÛÛ[30m» [34mÛÛ[30mÉÍÍ[34mÛÛ[30m»[8C[36mÛÛ[30mÉÍÍ[36mÛÛ[30m» [36mÛÛ[30mÉÍÍ[36mÛÛ[30m» [36mÛÛ[30mÉÍÍÍÍ¼ [36mÛÛ[30mÉÍÍ[36mÛÛ[30m» [36mÛÛ[30mº [36mÛÛ[30mÉ¼
+[34mÛÛ[30mº  [34mÛÛ[30mº [34mÛÛÛÛÛÛ[30mÉ¼[8C[36mÛÛÛÛÛÛ[30mÉ¼ [36mÛÛÛÛÛÛ[30mÉ¼ [36mÛÛÛÛÛ[30m»   [36mÛÛÛÛÛÛÛ[30mº [36mÛÛÛÛÛ[30mÉ¼
+[34mÛÛ[30mº  [34mÛÛ[30mº [34mÛÛ[30mÉÍÍ[34mÛÛ[30m»[8C[36mÛÛ[30mÉÍÍ[36mÛÛ[30m» [36mÛÛ[30mÉÍÍ[36mÛÛ[30m» [36mÛÛ[30mÉÍÍ¼   [36mÛÛ[30mÉÍÍ[36mÛÛ[30mº [36mÛÛ[30mÉÍ[36mÛÛ[30m»
+[34mÛÛÛÛÛÛ[30mÉ¼ [34mÛÛ[30mº  [34mÛÛ[30mº[8C[36mÛÛÛÛÛÛ[30mÉ¼ [36mÛÛ[30mº  [36mÛÛ[30mº [36mÛÛÛÛÛÛÛ[30m» [36mÛÛ[30mº  [36mÛÛ[30mº [36mÛÛ[30mº  [36mÛÛ[30m»
+ÈÍÍÍÍÍ¼  ÈÍ¼  ÈÍ¼[8CÈÍÍÍÍÍ¼  ÈÍ¼  ÈÍ¼ ÈÍÍÍÍÍÍ¼ ÈÍ¼  ÈÍ¼ ÈÍ¼  ÈÍ¼
+[31mÛÛÛÛÛÛ[30m»   [31mÛÛÛÛÛÛÛ[30m»[30C[31mÛÛÛÛÛÛÛ[30m»  [31mÛÛÛ[30m»   [31mÛÛÛ[30m»
+[31mÛÛ[30mÉÍÍ[31mÛÛ[30m» [31mÛÛ[30mÉÍÍÍÍ[31mÛÛ[30m»[28C[31mÛÛ[30mÉÍÍÍÍ[31mÛÛ[30m» [31mÛÛÛÛ[30m» [31mÛÛÛÛ[30mº
+[31mÛÛÛÛÛÛ[30mÉ¼ [31mÛÛ[30mº    [31mÛÛ[30mº[28C[31mÛÛ[30mº    [31mÛÛ[30mº [31mÛÛ[30mÉ[31mÛÛÛÛ[30mÉ[31mÛÛ[30mº
+[31mÛÛ[30mÉÍÍ[31mÛÛ[30m» [31mÛÛ[30mº    [31mÛÛ[30mº[28C[31mÛÛ[30mº    [31mÛÛ[30mº [31mÛÛ[30mºÈ[31mÛÛ[30mÉ¼[31mÛÛ[30mº
+[31mÛÛÛÛÛÛ[30mÉ¼ È[31mÛÛÛÛÛÛÛ[30mÉ¼[28CÈ[31mÛÛÛÛÛÛÛ[30mÉ¼ [31mÛÛ[30mº ÈÍ¼ [31mÛÛ[30mº
+ÈÍÍÍÍÍ¼   ÈÍÍÍÍÍÍ¼[30CÈÍÍÍÍÍÍ¼  ÈÍ¼[5CÈÍ¼
+[35mÛÛ[30m» [35mÛÛÛ[30m»   [35mÛÛ[30m» [35mÛÛ[30m»   [35mÛÛ[30m»  [35mÛÛÛÛÛ[30m»  [35mÛÛÛÛÛÛ[30m»  [35mÛÛÛÛÛÛÛ[30m» [35mÛÛÛÛÛÛ[30m»  [35mÛÛÛÛÛÛÛ[30m»
+[35mÛÛ[30mº [35mÛÛÛÛ[30m»  [35mÛÛ[30mº [35mÛÛ[30mº   [35mÛÛ[30mº [35mÛÛ[30mÉÍÍ[35mÛÛ[30m» [35mÛÛ[30mÉÍÍ[35mÛÛ[30m» [35mÛÛ[30mÉÍÍÍÍ¼ [35mÛÛ[30mÉÍÍ[35mÛÛ[30m» [35mÛÛ[30mÉÍÍÍÍ¼
+[35mÛÛ[30mº [35mÛÛ[30mÉ[35mÛÛ[30m» [35mÛÛ[30mº [35mÛÛ[30mº   [35mÛÛ[30mº [35mÛÛÛÛÛÛÛ[30mº [35mÛÛ[30mº  [35mÛÛ[30mº [35mÛÛÛÛÛ[30m»   [35mÛÛÛÛÛÛ[30mÉ¼ [35mÛÛÛÛÛÛÛ[30m»
+[35mÛÛ[30mº [35mÛÛ[30mºÈ[35mÛÛ[30m»[35mÛÛ[30mº È[35mÛÛ[30m» [35mÛÛ[30mÉ¼ [35mÛÛ[30mÉÍÍ[35mÛÛ[30mº [35mÛÛ[30mº  [35mÛÛ[30mº [35mÛÛ[30mÉÍÍ¼   [35mÛÛ[30mÉÍÍ[35mÛÛ[30m» ÈÍÍÍÍ[35mÛÛ[30mº
+[35mÛÛ[30mº [35mÛÛ[30mº È[35mÛÛÛÛ[30mº  È[35mÛÛÛÛ[30mÉ¼  [35mÛÛ[30mº  [35mÛÛ[30mº [35mÛÛÛÛÛÛ[30mÉ¼ [35mÛÛÛÛÛÛÛ[30m» [35mÛÛ[30mº  [35mÛÛ[30mº [35mÛÛÛÛÛÛÛ[30mº
+ÈÍ¼ ÈÍ¼  ÈÍÍÍ¼   ÈÍÍÍ¼   ÈÍ¼  ÈÍ¼ ÈÍÍÍÍÍ¼  ÈÍÍÍÍÍÍ¼ ÈÍ¼  ÈÍ¼ ÈÍÍÍÍÍÍ¼
+`.split('').map(function (ch) {
+  let idx = ch.charCodeAt(0);
+  if (ansi_to_unicode_a[idx]) {
+    return String.fromCharCode(ansi_to_unicode_a[idx]);
+  } else {
+    return ch;
+  }
+}).join('').replace(/\n/g, '\r\n');
 function menuInit(): void {
-  terminal.baud = 9600;
+  terminal.baud = 14400;
   terminal.draw_cursor = [1, 4];
   terminal.color(7,0);
   terminal.clear();
   terminalSettingsInit(terminal);
 
+  terminal.subViewPush({
+    x: 4,
+    y: 4,
+    w: WINCHS - 3 * 2,
+    h: HINCHS,
+  });
+  terminal.print({
+    x: 0,
+    y: 0,
+    text: TITLE,
+  });
+  terminal.subViewPop();
+  terminal.normal();
+
+  if (game_state) {
+    terminal.finishAnimating();
+  }
+
+  let line = '  By Jimb Esser for Ludum Dare 60  ';
+  terminal.print({
+    x: floor((WINCHS - line.length) / 2),
+    y: HINCHS - 3,
+    text: line,
+    fg: 0,
+    bg: 8,
+  });
+
+  terminal.color(6, 0);
   terminal.cells({
     x: MENU_X - 2, y: MENU_Y - 1, ws: [MENU_W], hs: [game_state ? 4 : 3], charset: 2,
     header: ' MAIN MENU ',
@@ -2196,6 +2258,6 @@ export function main(): void {
     if (debugDefineIsSet('OPTS')) {
       // optionsMenu('title');
     }
-    // newGameInit();
+    newGameInit();
   }
 }
