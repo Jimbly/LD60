@@ -14,7 +14,7 @@ Acknowledgements:
 Start with: `npm start` (after running `npm i` once)
 
 TODO:
-* add score (total + shown per-minigame)
+* main menu, high scores
 * flash board when losing a ball
 * score floaters
 * fix T-junctions on borders during all phases

@@ -14,7 +14,6 @@ import {
 } from 'glov/client/engine';
 import { Box } from 'glov/client/geom_types';
 import { keyDown, keyDownEdge, KEYS } from 'glov/client/input';
-import { localStorageGet, localStorageGetJSON, localStorageSetJSON } from 'glov/client/local_storage';
 import { netInit } from 'glov/client/net';
 import { scoreAlloc, ScoreSystem } from 'glov/client/score';
 import { ansi_to_unicode_a, terminalCreate } from 'glov/client/terminal';
@@ -1887,9 +1886,6 @@ let game_state: GameState;
 export function gameState(): GameState {
   return game_state;
 }
-export function saveGame(): void {
-  localStorageSetJSON<SavedGame>('savegame', game_state.data);
-}
 
 export function setScore(): void {
   let score: Score = {
@@ -1964,7 +1960,6 @@ function menu(dt: number): void {
     items: [
       'New Game ',
       `${ansi.yellow.bright('[O]')}ptions `,
-      ...(canLoad() ? ['Continue '] : []),
     ],
   });
 
@@ -1974,9 +1969,6 @@ function menu(dt: number): void {
       break;
     case 1:
       terminalSettingsShow();
-      break;
-    case 2:
-      loadGame();
       break;
   }
 
@@ -1998,8 +1990,6 @@ function menuInit(): void {
   setState(menu);
 }
 
-type SavedGame = GameData;
-
 function statePlayInit(): void {
   terminal.baud = Infinity;
   terminal.draw_cursor = false;
@@ -2018,19 +2008,6 @@ export function newGameInit(): void {
   terminal.clear();
   statePlayInit();
 }
-
-export function loadGame(): void {
-  let data = localStorageGetJSON<SavedGame>('savegame');
-  assert(data);
-  game_state = new GameState();
-  game_state.data = data;
-  statePlayInit();
-}
-
-export function canLoad(): boolean {
-  return Boolean(localStorageGet('savegame'));
-}
-
 
 export function main(): void {
   if (platformParameterGet('reload_updates') && MODE_DEVELOPMENT) {
