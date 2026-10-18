@@ -897,11 +897,11 @@ class BlocksState implements Minigame {
         if (hp === 1) {
           // pass through
         } else {
-          // bump, do damage
+          // do damage and pass through
           hp = 1;
           v = (v & ~(HP_MASK << HP_SHIFT)) | (hp << HP_SHIFT);
           board[old_py][w*2 + xoffs] = v;
-          pos[0] = old_px;
+          // pos[0] = old_px;
         }
       }
     }
@@ -1544,7 +1544,7 @@ const WALL_X = [
   (MINIGAME_W + 1) * 3,
   (MINIGAME_W + 1) * 4 + 1 - 1,
 ];
-const INITIAL_HP = MODE_DEVELOPMENT ? 0 : 3;
+const INITIAL_HP = 3; // MODE_DEVELOPMENT ? 0 : 3;
 type GameData = {
   a: number;
   b: number;

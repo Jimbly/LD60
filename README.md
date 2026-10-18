@@ -16,5 +16,4 @@ Acknowledgements:
 Start with: `npm start` (after running `npm i` once)
 
 TODO:
-* simplify moving from Blocks to Kaboom - just move through and leave a broken wall behind
 * background ambient
