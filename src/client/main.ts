@@ -145,6 +145,143 @@ type Ball = {
   dir: JSVec2;
 };
 
+function initBoards(str: string): number[][][] {
+  let lines = str.trim().split('\n');
+  let ret: number[][][] = [];
+  let board: number[][] = [];
+  for (let ii = 0; ii < lines.length; ++ii) {
+    let line = lines[ii].trim();
+    if (!line) {
+      if (board.length) {
+        ret.push(board);
+        board = [];
+      }
+    } else {
+      board.push(line.split('').map((a) => {
+        if (a === '.') {
+          return 0;
+        }
+        if (isFinite(Number(a))) {
+          return Number(a);
+        }
+        return 1 + randInt(BLOCK_COLORS.length - 1);
+      }));
+    }
+  }
+  if (board.length) {
+    ret.push(board);
+  }
+  return ret;
+}
+const BREAKOUT_BOARDS = initBoards(`
+.
+.
+.2.2
+1.1.
+
+.
+.
+1221
+3..3
+4224
+
+.
+12.4
+1.34
+12.4
+1.34
+
+.
+1234
+4.23
+34.2
+2341
+
+.
+xx.x
+xx.x
+x.xx
+x.xx
+xx.x
+xx.x
+
+.
+xxxx
+x..x
+x..x
+xxxx
+x..x
+x..x
+xxxx
+
+.12.
+.34.
+.23.
+.41.
+.34.
+.12.
+.41.
+.23.
+.12.
+.34.
+.23.
+.41.
+
+.
+xxxx
+xx.x
+x.xx
+xxxx
+x.xx
+xx.x
+xxxx
+
+.
+xxxx
+x..x
+x..x
+x..x
+x..x
+x..x
+x..x
+x..x
+xxxx
+x..x
+x..x
+x..x
+
+.
+xxxx
+x.xx
+x..x
+x..x
+x..x
+x..x
+x.xx
+xxx.
+x.xx
+x..x
+x.xx
+xxxx
+
+.
+xxxx
+..x.
+xxx.
+....
+xxxx
+..x.
+xxxx
+....
+x.xx
+xxxx
+xx.x
+.
+x...
+xxxx
+xxxx
+
+`);
 const NUM_BALLS = 8;
 class BreakoutState implements Minigame {
   level = 0;
@@ -155,6 +292,7 @@ class BreakoutState implements Minigame {
   player_width = 5;
   block_xoffs = 1 + floor((this.w % BREAKOUT_BLOCK_W) / 2);
   balls_left = 0;
+  ball_speed = 0;
   newBall(): void {
     this.state.balls.push({
       pos: [round(this.player) + this.xoffs, this.h - 2],
@@ -171,19 +309,46 @@ class BreakoutState implements Minigame {
   }
 
   newBoard(): void {
-    let { block_xoffs, w, h, board, xoffs } = this;
-    let blocks_start = 1;
-    let blocks_end = floor(h / 2) - 1;
+    let { block_xoffs, w, board, xoffs, level } = this;
     let blocks_per_row = floor((w - block_xoffs) / BREAKOUT_BLOCK_W);
-    for (let yy = blocks_start; yy < blocks_end; ++yy) {
+    let template = BREAKOUT_BOARDS[level];
+    this.ball_speed = lerp(pow(0.9, level), 2, 1);
+    if (!template) {
+      let total_blocks = min(30 + (level - BREAKOUT_BOARDS.length) * 3, 4 * (MINIGAME_H - 2));
+      let too_many_a = total_blocks >= (3 * (MINIGAME_H - 3));
+      let too_many_b = total_blocks >= (4 * (MINIGAME_H - 3));
+      let blocks_start = too_many_b ? 0 : 1;
+      template = [];
+      while (template.length < blocks_start) {
+        template.push([]);
+      }
+      for (let yy = blocks_start; total_blocks > 0; ++yy) {
+        let row: number[] = [];
+        template.push(row);
+        let skip_idx = too_many_a ? -1 : randInt(4);
+        for (let ii = 0; ii < blocks_per_row; ++ii) {
+          if (ii === skip_idx) {
+            row.push(0);
+          } else {
+            let color = 1 + randInt(BLOCK_COLORS.length - 1);
+            row.push(color);
+            --total_blocks;
+          }
+        }
+      }
+    }
+    for (let yy = 0; yy < template.length; ++yy) {
+      let rowin = template[yy];
       let row = board[yy];
       for (let ii = 0; ii < blocks_per_row; ++ii) {
-        let color = 1 + randInt(BLOCK_COLORS.length - 1);
-        color |= QUADRUPLE;
-        let x0 = xoffs + block_xoffs + ii * BREAKOUT_BLOCK_W;
-        color |= (x0 & 3) << XOFFS_SHIFT;
-        for (let jj = 0; jj < BREAKOUT_BLOCK_W; ++jj) {
-          row[x0 + jj] = color;
+        let color = rowin[ii];
+        if (color) {
+          color |= QUADRUPLE;
+          let x0 = xoffs + block_xoffs + ii * BREAKOUT_BLOCK_W;
+          color |= (x0 & 3) << XOFFS_SHIFT;
+          for (let jj = 0; jj < BREAKOUT_BLOCK_W; ++jj) {
+            row[x0 + jj] = color;
+          }
         }
       }
     }
@@ -212,7 +377,7 @@ class BreakoutState implements Minigame {
       let { pos: ball_pos, dir: ball_dir } = ball;
       let old_bx = round(ball_pos[0]);
       let old_by = round(ball_pos[1]);
-      let ball_spd = dt * 0.007;
+      let ball_spd = dt * 0.007 * this.ball_speed;
       ball_pos[0] += ball_dir[0] * ball_spd * 2;
       ball_pos[1] += ball_dir[1] * ball_spd;
       if (ball_pos[0] < 0) {
@@ -1199,7 +1364,9 @@ class GameState {
     this.game_over = false;
     this.meta = 0;
     if (MODE_DEVELOPMENT) {
-      this.meta = 0;
+      while (this.meta < 1) {
+        this.gameWon(this.minigames[this.meta % 4]);
+      }
       for (let ii = 0; ii < min(this.meta, this.minigames.length); ++ii) {
         this.minigames[ii].level++;
       }
@@ -1496,7 +1663,7 @@ class GameState {
           for (let yy = 0; yy < MINIGAME_H; ++yy) {
             for (let xx = 0; xx < MINIGAME_W; ++xx) {
               let ch = String.fromCharCode(ansi_to_unicode_a[
-                176 + floor((randSpatial(777, xx + xoffs, yy, 1) + ((getFrameTimestamp()/50000)%1)) * (224-176))]);
+                176 + floor(((randSpatial(777, xx + xoffs, yy, 1) + getFrameTimestamp()/190000)%1) * (247-176))]);
               terminal.print({
                 x: xx + xoffs,
                 y: yy,
