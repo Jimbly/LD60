@@ -1720,7 +1720,7 @@ class GameState {
     this.flash_lives = [];
     this.game_over = false;
     this.meta = 0;
-    if (MODE_DEVELOPMENT && true) {
+    if (MODE_DEVELOPMENT && false) {
       while (this.meta < 6) {
         let idx = this.meta % 4;
         this.gameWon(this.minigames[idx]);
