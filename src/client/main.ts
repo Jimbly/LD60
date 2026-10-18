@@ -1439,7 +1439,19 @@ class KaboomState implements Minigame {
     if (this.enemy_counter <= 0) {
       this.enemy_counter += this.kaboom_speed;
       while (this.enemy_target === this.enemy) {
-        this.enemy_target = randInt(this.w);
+        let valid_targets = [];
+        for (let ii = 0; ii < w; ++ii) {
+          if (board[h-1][xoffs + ii]) {
+            valid_targets.push(ii);
+          }
+        }
+        if (valid_targets.length) {
+          let idx = randInt(valid_targets.length);
+          this.enemy_target = valid_targets[idx];
+        }
+        if (this.enemy_target === this.enemy) {
+          this.enemy_target = randInt(this.w);
+        }
       }
       let delta = sign(this.enemy_target - this.enemy);
       this.enemy += delta;
@@ -1526,6 +1538,14 @@ class KaboomState implements Minigame {
     overlay(max(0, px) + 1, py + 1, '\\═/');
     terminal.normal();
 
+    if (MODE_DEVELOPMENT && false) {
+      terminal.print({
+        x: this.enemy_target + xoffs,
+        y: 0,
+        fg: 12,
+        text: '\x02',
+      });
+    }
     terminal.print({
       x: enemy + xoffs,
       y: 0,
