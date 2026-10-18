@@ -791,7 +791,7 @@ class InvadersState implements Minigame {
     let invader_pad = 3;
     let level_exp = pow(0.9, this.level - 1);
     this.invader_move_time = 1000;
-    this.invader_shoot_time = lerp(level_exp, this.invader_move_time / 2, this.invader_move_time * 3);
+    this.invader_shoot_time = round(lerp(level_exp, this.invader_move_time / 2, this.invader_move_time * 3));
 
     if (this.level === 0) {
       num_invaders = 4;
@@ -1039,10 +1039,7 @@ class InvadersState implements Minigame {
   }
 }
 
-const KABOOM_SPEED = 100;
 const KABOOM_BULLET_TIME = 200;
-const KABOOM_SHOOT_REST_TIME = 4000;
-const KABOOM_NUM_SHOTS = 10;
 class KaboomState implements Minigame {
   level = 0;
   w = MINIGAME_W;
@@ -1061,6 +1058,9 @@ class KaboomState implements Minigame {
   state: GameState;
   points = 0;
   goal = 0;
+  kaboom_speed = 100;
+  kaboom_shoot_rest_time = 4000;
+  kaboom_num_shots = 10;
   constructor(xoffs: number, state: GameState) {
     this.xoffs = xoffs + 1;
     this.state = state;
@@ -1068,20 +1068,34 @@ class KaboomState implements Minigame {
     this.newBoard();
   }
   newBoard(): void {
-    let { state, w, h, xoffs, board } = this;
+    let { state, w, h, xoffs, board, level } = this;
     this.player = w / 2;
     this.enemy = w / 2;
     this.enemy_counter = 0;
     this.shoot_counter = 2000;
     this.shoot_count = 0;
     this.bullet_counter = KABOOM_BULLET_TIME / 2;
+    this.points = 0;
+    this.goal = 20 + max(0, (level - 1) * 4);
+    let level_exp = min(1, pow(0.9, level - 1));
+    this.kaboom_speed = round(lerp(level_exp, 40, 100));
+    this.kaboom_shoot_rest_time = round(lerp(level_exp, 2000, 4000));
+    this.kaboom_num_shots = round(lerp(level_exp, 20, 10));
     state.clearBoard(xoffs);
     state.clearBullets('kaboom');
-    for (let yy = h - 2; yy < h; ++yy) {
+    let rows = 2;
+    let blocks_per_row = w / 2;
+    if (level === 0) {
+      rows = 1;
+      blocks_per_row = 3;
+    } else if (level > 6) {
+      blocks_per_row -= 2;
+    }
+    for (let yy = h - rows; yy < h; ++yy) {
       let row = board[yy];
-      for (let xx = 0; xx < w/2; ++xx) {
+      for (let xx = 0; xx < blocks_per_row; ++xx) {
         let v = randInt(BLOCK_COLORS.length - 1) + 1;
-        let xpos = xoffs + xx * 2;
+        let xpos = xoffs + (xx + floor((w/2 - blocks_per_row)/2)) * 2;
         v |= DOUBLE;
         let xmod = xpos & 1;
         v |= xmod << XOFFS_SHIFT;
@@ -1089,8 +1103,6 @@ class KaboomState implements Minigame {
         row[xpos + 1] = v;
       }
     }
-    this.points = 0;
-    this.goal = 20;
   }
   died(): void {
     this.state.gameLost(this);
@@ -1107,24 +1119,34 @@ class KaboomState implements Minigame {
     let { bullets } = state;
     this.shoot_counter -= dt;
     if (this.shoot_counter <= 0) {
-      this.shoot_counter += KABOOM_SPEED * 3;
+      this.shoot_counter += this.kaboom_speed * 3;
       this.shoot_count++;
-      bullets.push({
-        x: this.enemy + xoffs,
-        y: 1,
-        ydir: 1,
-        ycounter: this.bullet_counter,
-        ytime: KABOOM_BULLET_TIME,
-        type: 'kaboom',
-      });
-      if (this.shoot_count === KABOOM_NUM_SHOTS) {
+      let existing = false;
+      for (let ii = 0; ii < bullets.length; ++ii) {
+        if (bullets[ii].x === this.enemy + xoffs &&
+          bullets[ii].y === 1
+        ) {
+          existing = true;
+        }
+      }
+      if (!existing) {
+        bullets.push({
+          x: this.enemy + xoffs,
+          y: 1,
+          ydir: 1,
+          ycounter: this.bullet_counter,
+          ytime: KABOOM_BULLET_TIME,
+          type: 'kaboom',
+        });
+      }
+      if (this.shoot_count === this.kaboom_num_shots) {
         this.shoot_count = 0;
-        this.shoot_counter += KABOOM_SHOOT_REST_TIME;
+        this.shoot_counter += this.kaboom_shoot_rest_time;
       }
     }
     this.enemy_counter -= dt;
     if (this.enemy_counter <= 0) {
-      this.enemy_counter += KABOOM_SPEED;
+      this.enemy_counter += this.kaboom_speed;
       while (this.enemy_target === this.enemy) {
         this.enemy_target = randInt(this.w);
       }
@@ -1367,7 +1389,7 @@ class GameState {
     this.game_over = false;
     this.meta = 0;
     if (MODE_DEVELOPMENT) {
-      while (this.meta < 2) {
+      while (this.meta < 3) {
         this.gameWon(this.minigames[this.meta % 4]);
       }
       for (let ii = 0; ii < min(this.meta, this.minigames.length); ++ii) {
