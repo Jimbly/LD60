@@ -641,10 +641,13 @@ class BlocksState implements Minigame {
   won(): void {
     this.state.gameWon(this);
   }
+  drop_speed = 0;
   newBoard(): void {
-    let { w, h, num_blocks, state, xoffs } = this;
+    let { w, h, num_blocks, state, xoffs, level } = this;
     state.clearBoard(xoffs);
-    let num_targets = 8;
+    this.drop_speed = lerp(pow(0.9, level), 1.5, 1);
+    let num_targets = min(level === 0 ? 3 :
+      6 + level * 3, 100);
     for (let ii = 0; ii < num_targets; ++ii) {
       while (true) {
         let x = randInt(w);
@@ -704,7 +707,7 @@ class BlocksState implements Minigame {
       px = old_px;
       pos[0] = old_px;
     }
-    pos[1] += dt * 0.002;
+    pos[1] += dt * 0.002 * this.drop_speed;
     if (actionEdge('down', { peek: true })) {
       pos[1] = old_py + 1;
       pos[1] = floor(pos[1]);
@@ -1364,7 +1367,7 @@ class GameState {
     this.game_over = false;
     this.meta = 0;
     if (MODE_DEVELOPMENT) {
-      while (this.meta < 1) {
+      while (this.meta < 2) {
         this.gameWon(this.minigames[this.meta % 4]);
       }
       for (let ii = 0; ii < min(this.meta, this.minigames.length); ++ii) {
