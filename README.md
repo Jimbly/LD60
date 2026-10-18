@@ -15,3 +15,6 @@ Start with: `npm start` (after running `npm i` once)
 
 TODO:
 * add score (total + shown per-minigame)
+* flash board when losing a ball
+* score floaters
+* fix T-junctions on borders during all phases

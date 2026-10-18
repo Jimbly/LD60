@@ -20,7 +20,7 @@ import { scoreAlloc, ScoreSystem } from 'glov/client/score';
 import { ansi_to_unicode_a, terminalCreate } from 'glov/client/terminal';
 import { terminalSettingsInit, terminalSettingsShow } from 'glov/client/terminal_settings';
 import { scaleSizes, setFontHeight } from 'glov/client/ui';
-import { ansi } from 'glov/common/ansi';
+import { ansi, stripAnsi } from 'glov/common/ansi';
 import { randSpatial } from 'glov/common/rand_fast';
 import { Rec } from 'glov/common/types';
 import { clamp, lerp, ridx, sign } from 'glov/common/util';
@@ -138,6 +138,7 @@ interface Minigame {
   won(): void;
   died(): void;
   level: number;
+  score: number;
 }
 
 type Ball = {
@@ -285,6 +286,7 @@ xxxx
 const NUM_BALLS = 8;
 class BreakoutState implements Minigame {
   level = 0;
+  score = 0;
   board: Board;
   w = MINIGAME_W;
   h = MINIGAME_H;
@@ -293,11 +295,13 @@ class BreakoutState implements Minigame {
   block_xoffs = 1 + floor((this.w % BREAKOUT_BLOCK_W) / 2);
   balls_left = 0;
   ball_speed = 0;
+  hits = 0;
   newBall(): void {
     this.state.balls.push({
       pos: [round(this.player) + this.xoffs, this.h - 2],
       dir: [0, -1],
     });
+    this.hits = 0;
   }
   xoffs: number;
   state: GameState;
@@ -408,6 +412,7 @@ class BreakoutState implements Minigame {
             impact *= 0.75;
             let vec = [sin(PI/2 * impact), -cos(PI/2 * impact)] as const;
             v2lerp(ball_dir, 0.5 + abs(impact) * 0.5, ball_dir, vec);
+            this.hits = 0;
           }
         }
       }
@@ -435,6 +440,11 @@ class BreakoutState implements Minigame {
                 by = old_by;
                 ball_pos[1] = old_by;
               }
+            }
+            v = board[by][bx];
+            if (!(v & (INDESTRUCTIBLE | BORDER)) && this.level) {
+              this.score += 10 + this.hits + (this.level - 1) * 0.5;
+              this.hits++;
             }
             state.hitBlock(bx, by);
             if (bx !== old_bx) {
@@ -503,6 +513,7 @@ function matches(color: number, block: number): boolean {
 }
 class BlocksState implements Minigame {
   level = 0;
+  score = 0;
   w = floor(MINIGAME_W/2);
   h = MINIGAME_H;
   num_blocks = 4;
@@ -511,6 +522,7 @@ class BlocksState implements Minigame {
   board: number[][];
   xoffs: number;
   state: GameState;
+  chain = 0;
   constructor(xoffs: number, state: GameState) {
     this.xoffs = xoffs + 1;
     this.state = state;
@@ -589,15 +601,22 @@ class BlocksState implements Minigame {
         if (!color) {
           continue;
         }
+        let any_non_target = false;
         if (color & TARGET) {
           color -= TARGET;
+        } else {
+          any_non_target = true;
         }
         if (xx <= w - MATCH_LEN) {
           let match_len = 1;
+          let ant = any_non_target;
           while (xx + match_len < w && matches(color, this.logicBoard(xx + match_len, yy))) {
+            if (!(this.logicBoard(xx + match_len, yy) & TARGET)) {
+              ant = true;
+            }
             ++match_len;
           }
-          if (match_len >= MATCH_LEN) {
+          if (match_len >= MATCH_LEN && ant) {
             for (let ii = 0; ii < match_len; ++ii) {
               to_clear.push([xx + ii, yy]);
             }
@@ -605,10 +624,14 @@ class BlocksState implements Minigame {
         }
         if (yy <= h - MATCH_LEN) {
           let match_len = 1;
+          let ant = any_non_target;
           while (yy + match_len < h && matches(color, this.logicBoard(xx, yy + match_len))) {
+            if (!(this.logicBoard(xx, yy + match_len) & TARGET)) {
+              ant = true;
+            }
             ++match_len;
           }
-          if (match_len >= MATCH_LEN) {
+          if (match_len >= MATCH_LEN && ant) {
             for (let ii = 0; ii < match_len; ++ii) {
               to_clear.push([xx, yy + ii]);
             }
@@ -617,11 +640,19 @@ class BlocksState implements Minigame {
       }
     }
     for (let ii = 0; ii < to_clear.length; ++ii) {
-      this.setBoard(to_clear[ii][0], to_clear[ii][1], 0);
+      let [x, y] = to_clear[ii];
+      if (this.logicBoard(x, y)) {
+        if (this.level) {
+          this.score += this.chain * 8;
+        }
+        this.chain++;
+        this.setBoard(x, y, 0);
+      }
     }
   }
   piece_count = 0;
   newPiece(): void {
+    this.chain = 0;
     this.checkForClears();
     this.block = randInt(this.num_blocks) + 1;
     if (this.level === 0) {
@@ -803,6 +834,7 @@ const INVADER_BULLET_TIME = 250;
 const PLAYER_SHOOT_TIME = 1000;
 class InvadersState implements Minigame {
   level = 0;
+  score = 0;
   invaders: [number, number, number, string][] = [];
   w = MINIGAME_W;
   h = MINIGAME_H;
@@ -1022,6 +1054,9 @@ class InvadersState implements Minigame {
       let item = invaders[ii];
       if (checkHit(item[0], item[1])) {
         invaders.splice(ii, 1);
+        if (this.level) {
+          this.score += 4 + (this.level - 1) / 2;
+        }
       }
     }
     this.placeInvaders();
@@ -1080,6 +1115,7 @@ class InvadersState implements Minigame {
 const KABOOM_BULLET_TIME = 200;
 class KaboomState implements Minigame {
   level = 0;
+  score = 0;
   w = MINIGAME_W;
   h = MINIGAME_H;
   player_width = 5;
@@ -1208,6 +1244,9 @@ class KaboomState implements Minigame {
         b.y === py + 1 && b.x >= px + 1 && b.x < px + player_width - 1
       ) {
         this.points++;
+        if (this.level) {
+          this.score += 3 + (this.level - 1) / 5;
+        }
         ridx(bullets, ii);
       } else if (board[b.y][b.x]) {
         state.hitBlock(b.x, b.y);
@@ -1423,8 +1462,10 @@ class GameState {
     this.game_over = false;
     this.meta = 0;
     if (MODE_DEVELOPMENT) {
-      while (this.meta < 5) {
-        this.gameWon(this.minigames[this.meta % 4]);
+      while (this.meta < 6) {
+        let idx = this.meta % 4;
+        this.gameWon(this.minigames[idx]);
+        this.minigames[idx].newBoard();
       }
       this.anims = [];
     }
@@ -1674,6 +1715,7 @@ class GameState {
     }
 
     if (this.meta >= 4) {
+      let total_score = 0;
       for (let ii = 0; ii < minigames.length; ++ii) {
         if (!active[ii]) {
           continue;
@@ -1704,7 +1746,26 @@ class GameState {
         ballsx = floor((MINIGAME_W - text.length) / 2);
         terminal.moveto(ballsx + xoffs, y);
         terminal.print({ text, fg: 7 });
+
+        y++;
+        total_score += minigame.score;
+        text = `Score ${ansi.green.bright(minigame.score.toFixed(0))}`;
+        ballsx = floor((MINIGAME_W - stripAnsi(text).length) / 2);
+        terminal.moveto(ballsx + xoffs, y);
+        terminal.print({ text, fg: 8 });
       }
+      let y = MINIGAME_H + 1;
+      let text = 'Total';
+      terminal.moveto(floor((CHW - text.length)/2), y);
+      terminal.print({ text, fg: 8 });
+      y++;
+      text = 'Score';
+      terminal.moveto(floor((CHW - text.length)/2), y);
+      terminal.print({ text, fg: 8 });
+      y++;
+      text = `${ansi.yellow.bright(total_score.toFixed(0))}`;
+      terminal.moveto(floor((CHW - stripAnsi(text).length)/2), y);
+      terminal.print({ text, fg: 7 });
     }
 
     for (let ii = 0; ii < active.length; ++ii) {
@@ -1839,7 +1900,7 @@ export function setScore(): void {
 }
 
 let view_x = 0;
-let view_board = { x: view_x, y: 1, w: MINIGAME_W * 4 + 5, h: MINIGAME_H + 3 };
+let view_board = { x: view_x, y: 1, w: MINIGAME_W * 4 + 5, h: MINIGAME_H + 4 };
 let view_invaders = { x: view_x, y: 1, w: MINIGAME_W, h: MINIGAME_H };
 view_x += MINIGAME_W + 1;
 let view_breakout = { x: view_x, y: 1, w: MINIGAME_W, h: MINIGAME_H };
