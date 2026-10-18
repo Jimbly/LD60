@@ -52,6 +52,8 @@ const game_height = HINCHS * 16;
 
 let terminal: ReturnType<typeof terminalCreate>;
 
+const FLOAT_DAMAGE = 'damage';
+
 export type Score = {
   score: number;
   l0: number;
@@ -467,8 +469,17 @@ class BreakoutState implements Minigame {
             }
             v = board[by][bx];
             if (!(v & (INDESTRUCTIBLE | BORDER)) && this.level) {
-              this.score += 10 + this.hits + (this.level - 1) * 0.5;
+              let dscore = 10 + this.hits + (this.level - 1) * 0.5;
+              this.score += dscore;
               this.hits++;
+              if (dscore) {
+                state.floater({
+                  x: bx - 1,
+                  y: by - 1,
+                  fg: 10,
+                  text: `+${dscore.toFixed(0)}`,
+                });
+              }
             }
             state.hitBlock(bx, by);
             if (bx !== old_bx) {
@@ -631,7 +642,7 @@ class BlocksState implements Minigame {
     board[py][xx+1] = v;
   }
   checkForClears(): void {
-    let { w, h } = this;
+    let { w, h, xoffs } = this;
     // check for clears
     let to_clear: JSVec2[] = [];
     for (let yy = 0; yy < h; ++yy) {
@@ -680,9 +691,26 @@ class BlocksState implements Minigame {
     }
     for (let ii = 0; ii < to_clear.length; ++ii) {
       let [x, y] = to_clear[ii];
-      if (this.logicBoard(x, y)) {
+      let color = this.logicBoard(x, y);
+      if (color) {
         if (this.level) {
-          this.score += this.chain * 8;
+          let v = this.chain * 8;
+          this.score += v;
+          this.state.floater({
+            x: xoffs + x * 2,
+            y: y,
+            fg: BLOCK_COLORS[(color & ~TARGET)],
+            w: 2,
+            text: FLOAT_DAMAGE,
+          });
+          if (v) {
+            this.state.floater({
+              x: xoffs + x * 2 + 2,
+              y: y - 1,
+              fg: 10,
+              text: `+${v}`,
+            });
+          }
         }
         this.chain++;
         this.setBoard(x, y, 0);
@@ -1094,7 +1122,22 @@ class InvadersState implements Minigame {
       if (checkHit(item[0], item[1])) {
         invaders.splice(ii, 1);
         if (this.level) {
-          this.score += 4 + (this.level - 1) / 2;
+          let v = 4 + (this.level - 1) / 2;
+          this.score += v;
+          state.floater({
+            x: item[0] + xoffs,
+            y: item[1],
+            text: FLOAT_DAMAGE,
+            fg: 12,
+          });
+          if (v) {
+            state.floater({
+              x: xoffs + item[0] + 1,
+              y: item[1] - 1,
+              fg: 10,
+              text: `+${v.toFixed(0)}`,
+            });
+          }
         }
       }
     }
@@ -1284,7 +1327,8 @@ class KaboomState implements Minigame {
       ) {
         this.points++;
         if (this.level) {
-          this.score += 3 + (this.level - 1) / 5;
+          let v = 3 + (this.level - 1) / 5;
+          this.score += v;
         }
         ridx(bullets, ii);
       } else if (board[b.y][b.x]) {
@@ -1382,6 +1426,16 @@ const META_MAP = [
   [true, true, true, false],
   [true, true, true, true],
 ];
+
+const DAMAGE_CHARS = '░■▒\x0f▓';
+type Floater = {
+  x: number;
+  y: number;
+  w?: number; // if FLOAT_DAMAGE
+  fg: number;
+  text: string;
+  timer?: number;
+};
 class GameState {
   mode: 'explore' | 'combat' = 'explore';
   data: GameData = { a: 0, b: 0 };
@@ -1517,6 +1571,7 @@ class GameState {
     //   this.gameLost(this.breakout);
     //   this.gameLost(this.breakout);
     // }
+    this.floaters = [];
   }
 
   anims: ({ type: 'won' | 'lost'; counter: number; max_counter: number } | null)[] = [];
@@ -1591,7 +1646,25 @@ class GameState {
     }
   }
 
+  floaters!: Floater[];
+  floater(float: Floater): void {
+    float.timer = float.timer || 333;
+    this.floaters.push(float);
+  }
+
+  updateFloaters(dt: number): void {
+    let { floaters } = this;
+    for (let ii = floaters.length - 1; ii >= 0; --ii) {
+      let float = floaters[ii];
+      float.timer! -= dt;
+      if (float.timer! <= 0) {
+        floaters.splice(ii, 1);
+      }
+    }
+  }
+
   update(dt: number): void {
+    this.updateFloaters(dt);
     this.updateBullets(dt);
     for (let ii = 0; ii < this.minigames.length; ++ii) {
       let anim = this.anims[ii];
@@ -1677,6 +1750,7 @@ class GameState {
         newv = (v & ~HP) | (hp << HP_SHIFT);
       }
     }
+    let block_color = v & COLORBITS;
     let block_w = (v & QUADRUPLE) ? 4 : (v & DOUBLE) ? 2 : 1;
     let block_xoffs = (v >> XOFFS_SHIFT) & 3;
     let blockx = floor((bx - block_xoffs) / block_w) * block_w + block_xoffs;
@@ -1686,6 +1760,13 @@ class GameState {
         board[by][xx] = newv;
       }
     }
+    this.floater({
+      x: blockx,
+      y: by,
+      fg: BLOCK_COLORS[block_color],
+      w: block_w,
+      text: FLOAT_DAMAGE,
+    });
   }
 
   renderEarly(): void {
@@ -1730,7 +1811,7 @@ class GameState {
   }
 
   renderLate(): void {
-    let { active, anims, balls, bullets, minigames, lives } = this;
+    let { active, anims, balls, bullets, minigames, lives, floaters } = this;
     for (let ii = 0; ii < bullets.length; ++ii) {
       let b = bullets[ii];
       terminal.print({
@@ -1840,6 +1921,24 @@ class GameState {
         }
       }
     }
+
+    for (let ii = 0; ii < floaters.length; ++ii) {
+      let float = floaters[ii];
+      let { text } = float;
+      if (text === FLOAT_DAMAGE) {
+        let num_c = float.w || 1;
+        text = '';
+        for (let jj = 0; jj < num_c; ++jj) {
+          text += DAMAGE_CHARS[floor(float.timer! / 66 + jj) % DAMAGE_CHARS.length];
+        }
+      }
+      terminal.print({
+        x: float.x,
+        y: float.y,
+        fg: float.fg,
+        text,
+      });
+    }
   }
 
   render(): void {
@@ -1916,6 +2015,7 @@ class GameState {
       });
       let sel = terminal.menu({
         color_sel: { fg: 14, bg: 1 },
+        color_unsel: { fg: 7, bg: 1 },
         color_execute: { fg: 9, bg: 14 },
         x: x + 14,
         y: y + 3,

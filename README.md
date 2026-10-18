@@ -16,7 +16,5 @@ Acknowledgements:
 Start with: `npm start` (after running `npm i` once)
 
 TODO:
-* score floaters
-  * similar floaters for showing blocks removed, invaders killed, etc
 * extra lives: every 200, 300, etc, pts
 * fix T-junctions on borders during all phases
