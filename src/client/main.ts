@@ -3,6 +3,23 @@
 const local_storage = require('glov/client/local_storage');
 local_storage.setStoragePrefix('ld60'); // Before requiring anything else that might load from this
 
+import { platformRegister } from 'glov/common/platform'; // eslint-disable-line import/order
+platformRegister('discord', {
+  devmode: 'off',
+  reload: true,
+  reload_updates: true,
+  random_creation_name: true,
+  exit: false,
+});
+
+platformRegister('itch', {
+  devmode: 'off',
+  reload: false,
+  reload_updates: false,
+  random_creation_name: true,
+  exit: false,
+});
+
 import assert from 'assert';
 import { actionDown, actionEdge } from 'glov/client/actions';
 import { MODE_DEVELOPMENT, platformParameterGet } from 'glov/client/client_config';
