@@ -318,6 +318,7 @@ class BreakoutState implements Minigame {
   balls_left = 0;
   ball_speed = 0;
   hits = 0;
+  flash = 0;
   newBall(): void {
     this.state.balls.push({
       pos: [round(this.player) + this.xoffs, this.h - 2],
@@ -443,6 +444,7 @@ class BreakoutState implements Minigame {
           ridx(balls, ball_idx);
           if (bx >= xoffs && bx <= xoffs + w) {
             if (this.balls_left) {
+              this.flash = 500;
               this.balls_left--;
             } else {
               lost = true;
@@ -496,6 +498,9 @@ class BreakoutState implements Minigame {
     } else if (lost) {
       this.died();
     }
+
+    this.flash -= dt;
+    this.flash = max(0, this.flash);
   }
   died(): void {
     this.state.gameLost(this);
@@ -504,8 +509,20 @@ class BreakoutState implements Minigame {
     this.state.gameWon(this);
   }
   render(): void {
-    let { xoffs, h, player, player_width, balls_left } = this;
+    let { xoffs, h, player, player_width, balls_left, flash } = this;
     terminal.normal();
+
+    if (flash) {
+      let bg = flash % 250 > 150 ? 4 : 0;
+      terminal.color(0, bg);
+      terminal.fill({
+        x: xoffs + 1,
+        y: MINIGAME_H - 3,
+        w: MINIGAME_W,
+        h: 3,
+      });
+    }
+
     let player_str = ['\x11'];
     for (let ii = 0; ii < player_width - 2; ++ii) {
       player_str.push('═');
