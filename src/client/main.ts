@@ -308,6 +308,18 @@ xxxx
 
 `);
 const NUM_BALLS = 8;
+function help(xoffs: number, text: string, y?: number): void {
+  let lines = text.split('\n');
+  for (let ii = 0; ii < lines.length; ++ii) {
+    let line = lines[ii];
+    terminal.print({
+      fg: 8,
+      x: xoffs + floor((MINIGAME_W - line.length) / 2),
+      y: (y || MINIGAME_H / 2) + ii,
+      text: line,
+    });
+  }
+}
 class BreakoutState implements Minigame {
   level = 0;
   score = 0;
@@ -520,8 +532,12 @@ class BreakoutState implements Minigame {
     this.state.gameWon(this);
   }
   render(): void {
-    let { xoffs, h, player, player_width, balls_left, flash } = this;
+    let { xoffs, h, player, player_width, balls_left, flash, level } = this;
     terminal.normal();
+
+    if (!level) {
+      help(xoffs + 1, 'Clear the board!\nDon\'t run out\nof balls.');
+    }
 
     if (flash) {
       let bg = flash % 250 > 150 ? 4 : 0;
@@ -893,7 +909,31 @@ class BlocksState implements Minigame {
     }
   }
   render(): void {
-    // nothing
+    if (!this.level) {
+      let { w, xoffs } = this;
+      let streak = 0;
+      let yavail = -1;
+      for (let yy = 4; yy < MINIGAME_H; ++yy) {
+        let row_clear = true;
+        for (let xx = 0; xx < w; ++xx) {
+          if (this.logicBoard(xx, yy)) {
+            row_clear = false;
+          }
+        }
+        if (row_clear) {
+          ++streak;
+          if (streak === 4) {
+            yavail = yy - 3;
+            break;
+          }
+        } else {
+          streak = 0;
+        }
+      }
+      if (yavail !== -1) {
+        help(xoffs, 'Match same-colored\nblocks.\nClear the \x02\x02 to\nwin.', yavail);
+      }
+    }
   }
 }
 
@@ -1121,15 +1161,15 @@ class InvadersState implements Minigame {
       let item = invaders[ii];
       if (checkHit(item[0], item[1])) {
         invaders.splice(ii, 1);
+        state.floater({
+          x: item[0] + xoffs,
+          y: item[1],
+          text: FLOAT_DAMAGE,
+          fg: 12,
+        });
         if (this.level) {
           let v = 4 + (this.level - 1) / 2;
           this.score += v;
-          state.floater({
-            x: item[0] + xoffs,
-            y: item[1],
-            text: FLOAT_DAMAGE,
-            fg: 12,
-          });
           if (v) {
             state.floater({
               x: xoffs + item[0] + 1,
@@ -1166,7 +1206,11 @@ class InvadersState implements Minigame {
   }
   render(): void {
     terminal.normal();
-    let { invaders, player, w, h, xoffs } = this;
+    let { invaders, player, w, h, xoffs, level } = this;
+
+    if (!level) {
+      help(xoffs, 'Shoot the\ninvaders.\nDon\'t get hit');
+    }
 
     // terminal.print({
     //   x: round(player),
@@ -1357,7 +1401,11 @@ class KaboomState implements Minigame {
   }
   render(): void {
     terminal.normal();
-    let { player, player_width, enemy, py, xoffs, board } = this;
+    let { player, player_width, enemy, py, xoffs, board, level } = this;
+
+    if (!level) {
+      help(xoffs, 'Protect your\nblocks.\nCollect enough\nto win.');
+    }
 
     let px = round(player - (player_width - 1) / 2) + xoffs;
     function overlay(x: number, y: number, str: string): void {
@@ -1524,6 +1572,7 @@ class GameState {
   }
   total_score = 0;
   initBoard(): void {
+    this.floaters = [];
     this.board = [];
     this.total_score = 0;
     let board = this.board;
@@ -1571,7 +1620,6 @@ class GameState {
     //   this.gameLost(this.breakout);
     //   this.gameLost(this.breakout);
     // }
-    this.floaters = [];
   }
 
   anims: ({ type: 'won' | 'lost'; counter: number; max_counter: number } | null)[] = [];

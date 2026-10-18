@@ -17,4 +17,4 @@ Start with: `npm start` (after running `npm i` once)
 
 TODO:
 * extra lives: every 200, 300, etc, pts
-* fix T-junctions on borders during all phases
+  * flash lives bar green
