@@ -36,6 +36,7 @@ import { randSpatial } from 'glov/common/rand_fast';
 import { Rec } from 'glov/common/types';
 import { clamp, lerp, ridx, sign } from 'glov/common/util';
 import { JSVec2, v2iNormalize, v2lerp } from 'glov/common/vmath';
+import { tickMusic } from './music';
 import { playSound, SOUND_DATA } from './sound_data';
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -193,7 +194,7 @@ function addScore(game: Minigame, delta: number): void {
         x: game.xoffs + 4 + (idx === 1 ? 0 : -1),
         y: MINIGAME_H + 2,
         fg: 10,
-        text: 'EXTRA LIFE!',
+        text: 'EXTRA ♥',
         timer: 1500,
       });
     }
@@ -452,8 +453,10 @@ class BreakoutState implements Minigame {
     let { xoffs, state, w, h, player_width, board } = this;
     let { balls } = state;
     let spd = 0.02;
-    this.player = max((this.player_width - 1) / 2 + 1, this.player - actionDown('left') * spd);
-    this.player = min(w - (this.player_width - 1) / 2, this.player + actionDown('right') * spd);
+    if (dt) {
+      this.player = max((this.player_width - 1) / 2 + 1, this.player - actionDown('left') * spd);
+      this.player = min(w - (this.player_width - 1) / 2, this.player + actionDown('right') * spd);
+    }
     if (!balls.length) {
       this.newBall();
     }
@@ -878,14 +881,16 @@ class BlocksState implements Minigame {
     let old_px = round(pos[0]);
     let old_py = floor(pos[1]);
     assert(!this.logicBoard(old_px, old_py));
-    if (actionEdge('left', { peek: true })) {
-      pos[0] = round(pos[0]) - 0.51;
+    if (dt) {
+      if (actionEdge('left', { peek: true })) {
+        pos[0] = round(pos[0]) - 0.51;
+      }
+      pos[0] -= pspd * actionDown('left');
+      if (actionEdge('right', { peek: true })) {
+        pos[0] = round(pos[0]) + 0.51;
+      }
+      pos[0] += pspd * actionDown('right');
     }
-    pos[0] -= pspd * actionDown('left');
-    if (actionEdge('right', { peek: true })) {
-      pos[0] = round(pos[0]) + 0.51;
-    }
-    pos[0] += pspd * actionDown('right');
     let px = round(pos[0]);
     if (px > old_px && px === w || px < old_px && px === w - 1) {
       // bumping right edge, do damage, or pass through
@@ -913,19 +918,21 @@ class BlocksState implements Minigame {
       pos[0] = old_px;
     }
     pos[1] += dt * 0.002 * this.drop_speed;
-    if (actionEdge('down', { peek: true })) {
-      pos[1] = old_py + 1;
-      pos[1] = floor(pos[1]);
-    }
-    if (actionDown('down')) {
-      this.down_time += actionDown('down');
-      if (this.down_time > 140) {
+    if (dt) {
+      if (actionEdge('down', { peek: true })) {
         pos[1] = old_py + 1;
         pos[1] = floor(pos[1]);
-        this.down_time -= 140;
       }
-    } else {
-      this.down_time = 0;
+      if (actionDown('down')) {
+        this.down_time += actionDown('down');
+        if (this.down_time > 140) {
+          pos[1] = old_py + 1;
+          pos[1] = floor(pos[1]);
+          this.down_time -= 140;
+        }
+      } else {
+        this.down_time = 0;
+      }
     }
 
     let py = floor(pos[1]);
@@ -1187,8 +1194,10 @@ class InvadersState implements Minigame {
   update(dt: number): void {
     let { w } = this;
     let hspd = 0.01 * 0.7;
-    this.player = max(1, this.player - actionDown('left') * hspd);
-    this.player = min(w - 2, this.player + actionDown('right') * hspd);
+    if (dt) {
+      this.player = max(1, this.player - actionDown('left') * hspd);
+      this.player = min(w - 2, this.player + actionDown('right') * hspd);
+    }
 
     this.updateInvaders(dt);
     this.fireBullets(dt);
@@ -1437,8 +1446,10 @@ class KaboomState implements Minigame {
     }
 
     let hspd = 0.01 * 4;
-    this.player = max((player_width - 1) / 2, this.player - actionDown('left') * hspd);
-    this.player = min(w - (player_width - 1) / 2 - 1, this.player + actionDown('right') * hspd);
+    if (dt) {
+      this.player = max((player_width - 1) / 2, this.player - actionDown('left') * hspd);
+      this.player = min(w - (player_width - 1) / 2 - 1, this.player + actionDown('right') * hspd);
+    }
 
     let px = round(this.player - (player_width - 1) / 2) + xoffs;
     let dead = false;
@@ -2222,7 +2233,14 @@ let views: [string, Box][] = [
   ['DR MAR', view_blocks],
   ['KABOOM', view_kaboom],
 ];
+let need_clear = false;
 function statePlay(dt: number): void {
+  tickMusic('game');
+  if (need_clear) {
+    need_clear = false;
+    terminal.color(7,0);
+    terminal.clear();
+  }
   if (MODE_DEVELOPMENT && keyDown(KEYS.SHIFT)) {
     dt *= 4;
   }
@@ -2302,6 +2320,7 @@ function myScoreToRow(row: unknown[], score: Score): void {
 
 
 function stateScores(dt: number): void {
+  tickMusic('menu');
   const style_title = fontStyle(null, {
     color: intColorFromVec4Color(terminal.palette[14]),
     outline_color: intColorFromVec4Color(terminal.palette[1]),
@@ -2372,12 +2391,16 @@ const MENU_Y = 11;
 
 let menu_ready = false;
 function menu(dt: number): void {
+  tickMusic('menu');
   if (!terminal.isAnimating()) {
     menu_ready = true;
   }
   let sel = !menu_ready ? -1 : terminal.menu({
     pre_sel: ' ■ ',
     pre_unsel: '   ',
+    color_unsel: { fg: 0, bg: 3 },
+    color_sel: { fg: 14, bg: 1 },
+    color_execute: { fg: 8, bg: 0 },
     x: MENU_X,
     y: MENU_Y,
     items: [
@@ -2390,6 +2413,8 @@ function menu(dt: number): void {
   if (sel !== -1) {
     playSound('button_click');
   }
+
+  terminal.render();
 
   switch (sel) { // eslint-disable-line default-case
     case game_state ? 0 : -999:
@@ -2406,7 +2431,6 @@ function menu(dt: number): void {
       break;
   }
 
-  terminal.render();
 }
 
 /* eslint @stylistic/max-len:off */
@@ -2437,7 +2461,7 @@ const TITLE = `[?7h[255D[0;1;34mÛÛÛÛÛÛ[30m»  [34mÛÛÛÛÛÛ[30m»
   }
 }).join('').replace(/\n/g, '\r\n');
 function menuInit(): void {
-  terminal.baud = 14400;
+  terminal.baud = MODE_DEVELOPMENT ? Infinity : 14400;
   terminal.draw_cursor = [1, 4];
   terminal.color(7,0);
   terminal.clear();
@@ -2470,10 +2494,17 @@ function menuInit(): void {
     bg: 8,
   });
 
-  terminal.color(6, 0);
+  terminal.color(11, 3);
   terminal.cells({
     x: MENU_X - 2, y: MENU_Y - 1, ws: [MENU_W], hs: [game_state ? 4 : 3], charset: 2,
     header: ' MAIN MENU ',
+  });
+  terminal.fill({
+    bg: 3,
+    x: MENU_X - 1,
+    y: MENU_Y,
+    w: MENU_W,
+    h: game_state ? 4 : 3,
   });
 
   setState(menu);
@@ -2482,8 +2513,7 @@ function menuInit(): void {
 function statePlayInit(): void {
   terminal.baud = Infinity;
   terminal.draw_cursor = false;
-  terminal.color(7,0);
-  terminal.clear();
+  need_clear = true;
   setState(statePlay);
 }
 
@@ -2493,8 +2523,6 @@ export function backToGame(): void {
 
 export function newGameInit(): void {
   game_state = new GameState();
-  terminal.normal();
-  terminal.clear();
   statePlayInit();
 }
 
@@ -2553,6 +2581,6 @@ export function main(): void {
     if (debugDefineIsSet('OPTS')) {
       // optionsMenu('title');
     }
-    newGameInit();
+    // newGameInit();
   }
 }
