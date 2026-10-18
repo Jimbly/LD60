@@ -2105,10 +2105,15 @@ class GameState {
         if (ii === 1) {
           xoffs++;
         }
+        let maxy = floor((MINIGAME_H + 3) * p);
         if (anim.type === 'lost') {
-          for (let jj = 0; jj < MINIGAME_H * p; ++jj) {
+          for (let jj = 0; jj < maxy; ++jj) {
             let yy = MINIGAME_H - 1 - jj;
-            for (let xx = 0; xx < MINIGAME_W; ++xx) {
+            if (yy < 0) {
+              break;
+            }
+            let xindent = jj === maxy - 1 ? 3 : jj === maxy - 2 ? 1 : 0;
+            for (let xx = xindent; xx < MINIGAME_W - xindent; ++xx) {
               terminal.print({
                 x: xoffs + xx,
                 y: yy,
@@ -2119,8 +2124,12 @@ class GameState {
             }
           }
         } else {
-          for (let yy = 0; yy < MINIGAME_H * p; ++yy) {
-            for (let xx = 0; xx < MINIGAME_W; ++xx) {
+          for (let yy = 0; yy < maxy; ++yy) {
+            if (yy >= MINIGAME_H) {
+              break;
+            }
+            let xindent = yy === maxy - 1 ? 3 : yy === maxy - 2 ? 1 : 0;
+            for (let xx = xindent; xx < MINIGAME_W - xindent; ++xx) {
               terminal.print({
                 x: xoffs + xx,
                 y: yy,
