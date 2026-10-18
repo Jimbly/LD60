@@ -540,9 +540,9 @@ class ScrollAreaInternal implements ScrollArea {
     });
     let trough_draw_pad = button_h / 2;
     let trough_draw_height = trough_height + trough_draw_pad * 2;
-    let trough_v0 = -trough_draw_pad / pixel_scale / scrollbar_trough.uidata.total_h;
-    let trough_v1 = trough_v0 + trough_draw_height / pixel_scale / scrollbar_trough.uidata.total_h;
     if (scrollbar_trough.texs[0].wrap_t === gl.REPEAT) {
+      let trough_v0 = -trough_draw_pad / pixel_scale / scrollbar_trough.uidata.total_h;
+      let trough_v1 = trough_v0 + trough_draw_height / pixel_scale / scrollbar_trough.uidata.total_h;
       scrollbar_trough.draw({
         x: bar_x0, y: this.y + trough_draw_pad, z: this.z+0.1,
         w: bar_w, h: trough_draw_height,
@@ -562,10 +562,17 @@ class ScrollAreaInternal implements ScrollArea {
       });
     }
 
-    ui.drawVBox({
-      x: bar_x0, y: handle_screenpos, z: this.z + 0.3,
-      w: bar_w, h: handle_pixel_h,
-    }, scrollbar_handle, handle_color);
+    if (scrollbar_handle.texs[0].wrap_t === gl.REPEAT || true) { // LDJAM
+      ui.drawBoxTiled({
+        x: bar_x0, y: handle_screenpos, z: this.z + 0.3,
+        w: bar_w, h: handle_pixel_h,
+      }, scrollbar_handle, pixel_scale, handle_color);
+    } else {
+      ui.drawVBox({
+        x: bar_x0, y: handle_screenpos, z: this.z + 0.3,
+        w: bar_w, h: handle_pixel_h,
+      }, scrollbar_handle, handle_color);
+    }
     let grabber_h = scrollbar_handle_grabber.uidata.total_h * pixel_scale;
     scrollbar_handle_grabber.draw({
       x: bar_x0, y: handle_screenpos + (handle_pixel_h - grabber_h) / 2, z: this.z + 0.4,

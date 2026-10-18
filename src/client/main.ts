@@ -12,13 +12,24 @@ import {
   getFrameTimestamp,
   setState,
 } from 'glov/client/engine';
+import { ALIGN, fontStyle, fontStyleColored, intColorFromVec4Color } from 'glov/client/font';
 import { Box } from 'glov/client/geom_types';
 import { keyDown, keyDownEdge, KEYS } from 'glov/client/input';
 import { netInit } from 'glov/client/net';
 import { scoreAlloc, ScoreSystem } from 'glov/client/score';
+import { scoresDraw } from 'glov/client/score_ui';
+import { spriteSetGet } from 'glov/client/sprite_sets';
 import { ansi_to_unicode_a, terminalCreate } from 'glov/client/terminal';
 import { terminalSettingsInit, terminalSettingsShow } from 'glov/client/terminal_settings';
-import { scaleSizes, setFontHeight } from 'glov/client/ui';
+import {
+  buttonText,
+  drawRect,
+  loadUISprite2,
+  scaleSizes,
+  setFontHeight,
+  uiGetFont,
+  uiTextHeight,
+} from 'glov/client/ui';
 import { ansi, stripAnsi } from 'glov/common/ansi';
 import { randSpatial } from 'glov/common/rand_fast';
 import { Rec } from 'glov/common/types';
@@ -34,39 +45,51 @@ Z.BACKGROUND = 1;
 Z.SPRITES = 10;
 
 // Virtual viewport for our game logic
-const CHW = 77;
-const CHH = 25;
-const game_width = CHW * 8;
-const game_height = CHH * 16;
+const WINCHS = 77;
+const HINCHS = 25;
+const game_width = WINCHS * 8;
+const game_height = HINCHS * 16;
 
 let terminal: ReturnType<typeof terminalCreate>;
 
 export type Score = {
-  a: number;
-  b: number;
+  score: number;
+  l0: number;
+  l1: number;
+  l2: number;
+  l3: number;
 };
 let score_system: ScoreSystem<Score>;
 
 function init(): void {
   terminal = terminalCreate({
     z: Z.BACKGROUND + 1,
-    w: CHW,
-    h: CHH,
+    w: WINCHS,
+    h: HINCHS,
     char_width: 8,
   });
 
-  const ENCODE_A = 10000;
+  const ENCODE_A = 100;
   score_system = scoreAlloc({
     score_to_value: (score: Score): number => {
-      return score.a + score.b * ENCODE_A;
+      return (((score.score * ENCODE_A + score.l0) * ENCODE_A + score.l1) * ENCODE_A + score.l2) * ENCODE_A + score.l3;
     },
     value_to_score: (value: number): Score => {
-      let a = value % ENCODE_A;
-      value -= a;
-      let b = value / ENCODE_A;
+      let l3 = value % ENCODE_A;
+      value -= l3;
+      value /= ENCODE_A;
+      let l2 = value % ENCODE_A;
+      value -= l2;
+      value /= ENCODE_A;
+      let l1 = value % ENCODE_A;
+      value -= l1;
+      value /= ENCODE_A;
+      let l0 = value % ENCODE_A;
+      value -= l0;
+      value /= ENCODE_A;
+      let score = value;
       return {
-        a,
-        b,
+        score, l0, l1, l2, l3
       };
     },
     level_defs: 1,
@@ -1428,8 +1451,10 @@ class GameState {
       }
     }
   }
+  total_score = 0;
   initBoard(): void {
     this.board = [];
+    this.total_score = 0;
     let board = this.board;
     let w = (MINIGAME_W + 1) * 4 + 1;
     for (let yy = 0; yy < MINIGAME_H; ++yy) {
@@ -1755,16 +1780,21 @@ class GameState {
       }
       let y = MINIGAME_H + 1;
       let text = 'Total';
-      terminal.moveto(floor((CHW - text.length)/2), y);
+      terminal.moveto(floor((WINCHS - text.length)/2), y);
       terminal.print({ text, fg: 8 });
       y++;
       text = 'Score';
-      terminal.moveto(floor((CHW - text.length)/2), y);
+      terminal.moveto(floor((WINCHS - text.length)/2), y);
       terminal.print({ text, fg: 8 });
       y++;
       text = `${ansi.yellow.bright(total_score.toFixed(0))}`;
-      terminal.moveto(floor((CHW - stripAnsi(text).length)/2), y);
+      terminal.moveto(floor((WINCHS - stripAnsi(text).length)/2), y);
       terminal.print({ text, fg: 7 });
+
+      if (total_score > this.total_score) {
+        this.total_score = total_score;
+        setScore();
+      }
     }
 
     for (let ii = 0; ii < active.length; ++ii) {
@@ -1847,7 +1877,7 @@ class GameState {
   checkGameOver(): void {
     if (this.game_over) {
       let w = 41;
-      let x = floor((CHW - (w + 2))/2);
+      let x = floor((WINCHS - (w + 2))/2);
       let y = 6;
       terminal.color(15, 1);
       terminal.cells({
@@ -1867,7 +1897,7 @@ class GameState {
         y: y + 1,
         text,
       });
-      if (terminal.menu({
+      let sel = terminal.menu({
         color_sel: { fg: 14, bg: 1 },
         color_execute: { fg: 9, bg: 14 },
         x: x + 14,
@@ -1875,9 +1905,13 @@ class GameState {
         key: 'game_over',
         items: [
           'TRY AGAIN',
+          'VIEW SCORES',
         ],
-      }) === 0) {
+      });
+      if (sel === 0) {
         newGameInit();
+      } else if (sel === 1) {
+        setState(stateScores);
       }
     }
   }
@@ -1889,8 +1923,11 @@ export function gameState(): GameState {
 
 export function setScore(): void {
   let score: Score = {
-    a: game_state.data.a,
-    b: game_state.data.b,
+    score: round(game_state.total_score),
+    l0: game_state.minigames[0].level,
+    l1: game_state.minigames[1].level,
+    l2: game_state.minigames[2].level,
+    l3: game_state.minigames[3].level,
   };
   score_system.setScore(0, score);
 }
@@ -1947,19 +1984,108 @@ function statePlay(dt: number): void {
   game_state.checkGameOver();
 
   terminal.render();
+
+  if (actionEdge('cancel')) {
+    menuInit();
+  }
+}
+
+const SCORE_COLUMNS = [
+  // widths are just proportional, scaled relative to `width` passed in
+  { name: '', width: 4, align: ALIGN.HFIT | ALIGN.HRIGHT | ALIGN.VCENTER },
+  { name: 'Name', width: 16, align: ALIGN.HFIT | ALIGN.VCENTER },
+  { name: 'Score', width: 8 },
+  { name: 'Invd', width: 4 },
+  { name: 'Brkt', width: 4 },
+  { name: 'Drma', width: 4 },
+  { name: 'Kabo', width: 4 },
+];
+
+function myScoreToRow(row: unknown[], score: Score): void {
+  row.push(`${score.score}`, `${score.l0}`, `${score.l1}`, `${score.l2}`, `${score.l3}`);
+}
+
+
+function stateScores(dt: number): void {
+  const style_title = fontStyle(null, {
+    color: intColorFromVec4Color(terminal.palette[14]),
+    outline_color: intColorFromVec4Color(terminal.palette[1]),
+    outline_width: 2.5,
+  });
+  // titleMusic();
+  const style_score = fontStyleColored(null, intColorFromVec4Color(terminal.palette[7]));
+  const style_me = fontStyleColored(null, intColorFromVec4Color(terminal.palette[14]));
+  const style_header = fontStyleColored(null, intColorFromVec4Color(terminal.palette[10]));
+
+  drawRect(0, 0, game_width, game_height, 1, terminal.palette[1]);
+
+  const CHW = 8;
+  const CHH = 16;
+  let x = CHW;
+  let y = CHH;
+  let font = uiGetFont();
+
+  font.draw({
+    style: style_title,
+    x: 0,
+    y,
+    w: game_width,
+    text: 'HIGH SCORES',
+    size: CHH,
+    align: ALIGN.HCENTER,
+  });
+  y += CHH + 2;
+
+  let w = game_width - x * 2;
+  let text_height = uiTextHeight();
+  scoresDraw<Score>({
+    score_system: scoreSystem(),
+    allow_rename: true,
+    x,
+    width: w,
+    y,
+    height: game_height - y + 8,
+    z: Z.UI,
+    size: text_height,
+    line_height: text_height,
+    level_index: 0,
+    columns: SCORE_COLUMNS,
+    scoreToRow: myScoreToRow,
+    style_score,
+    style_me,
+    style_header,
+    color_line: terminal.palette[3],
+    color_me_background: terminal.palette[0],
+    rename_button_size: 6,
+    rename_button_offset: 0/text_height,
+  });
+
+  if (buttonText({
+    x: 4,
+    y: 4,
+    w: CHW * 6,
+    text: 'Back',
+    hotaction: 'cancel',
+  })) {
+    menuInit();
+  }
 }
 
 const MENU_W = 20;
-const MENU_X = (80 - MENU_W) / 2;
-const MENU_Y = 5;
+const MENU_X = floor((WINCHS - MENU_W) / 2);
+const MENU_Y = 16;
 
 function menu(dt: number): void {
   let sel = terminal.menu({
+    pre_sel: ' ■ ',
+    pre_unsel: '   ',
     x: MENU_X,
-    y: 5,
+    y: MENU_Y,
     items: [
-      'New Game ',
-      `${ansi.yellow.bright('[O]')}ptions `,
+      'New Game       ',
+      ...(game_state ? ['Continue       '] : []),
+      `${ansi.yellow.bright('[O]')}ptions      `,
+      'High Scores    ',
     ],
   });
 
@@ -1967,8 +2093,14 @@ function menu(dt: number): void {
     case 0:
       newGameInit();
       break;
-    case 1:
+    case game_state ? 1 : -999:
+      backToGame();
+      break;
+    case game_state ? 2 : 1:
       terminalSettingsShow();
+      break;
+    case game_state ? 3 : 2:
+      setState(stateScores);
       break;
   }
 
@@ -1983,8 +2115,8 @@ function menuInit(): void {
   terminalSettingsInit(terminal);
 
   terminal.cells({
-    x: MENU_X - 2, y: MENU_Y - 1, ws: [MENU_W], hs: [3], charset: 2,
-    header: ' MENU ',
+    x: MENU_X - 2, y: MENU_Y - 1, ws: [MENU_W], hs: [game_state ? 4 : 3], charset: 2,
+    header: ' MAIN MENU ',
   });
 
   setState(menu);
@@ -2029,9 +2161,24 @@ export function main(): void {
     pixel_aspect: (640/480) / (640 / 400),
     show_fps: false,
     ui_sounds: SOUND_DATA,
+    ui_sprites: {
+      ...spriteSetGet('pixely'),
+    },
   })) {
     return;
   }
+  loadUISprite2('scrollbar_trough', {
+    name: 'scrollbar_trough',
+    wrap_t: 1,
+    ws: [8],
+    hs: [16],
+  });
+  // loadUISprite2('scrollbar_handle', {
+  //   name: 'scrollbar_handle',
+  //   wrap_t: 1,
+  //   ws: [8],
+  //   hs: [16],
+  // });
   // font = uiGetFont();
 
   // Perfect sizes for pixely modes
@@ -2044,11 +2191,11 @@ export function main(): void {
 
   if (MODE_DEVELOPMENT) {
     if (debugDefineIsSet('HISCORE')) {
-      // hiScoresInit();
+      setState(stateScores);
     }
     if (debugDefineIsSet('OPTS')) {
       // optionsMenu('title');
     }
-    newGameInit();
+    // newGameInit();
   }
 }

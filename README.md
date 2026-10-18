@@ -14,7 +14,7 @@ Acknowledgements:
 Start with: `npm start` (after running `npm i` once)
 
 TODO:
-* main menu, high scores
+* title screen
 * flash board when losing a ball
 * score floaters
 * fix T-junctions on borders during all phases
