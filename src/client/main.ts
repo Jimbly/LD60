@@ -1557,7 +1557,7 @@ class GameState {
     this.game_over = false;
     this.meta = 0;
     if (MODE_DEVELOPMENT) {
-      while (this.meta < 6) {
+      while (this.meta < 0) {
         let idx = this.meta % 4;
         this.gameWon(this.minigames[idx]);
         this.minigames[idx].newBoard();
@@ -2080,6 +2080,24 @@ function statePlay(dt: number): void {
       terminal.cells({
         x: rect.x, y: rect.y - 1, ws: [rect.w], hs: [rect.h], charset: 1,
         header: ` ${views[ii][0]} `,
+      });
+      if (ii > 0 && game_state.active[ii-1]) {
+        terminal.print({
+          x: rect.x,
+          y: rect.y - 1,
+          text: '╦',
+        });
+        terminal.print({
+          x: rect.x,
+          y: rect.y + MINIGAME_H,
+          text: '╩',
+        });
+      }
+    } else if (game_state.anims[ii]) {
+      terminal.print({
+        x: rect.x + 2,
+        y: rect.y + MINIGAME_H,
+        text: '════════════════',
       });
     }
   }
