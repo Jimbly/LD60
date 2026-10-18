@@ -9,6 +9,7 @@ import { MODE_DEVELOPMENT, platformParameterGet } from 'glov/client/client_confi
 import {
   debugDefineIsSet,
   startup as engineStartup,
+  getFrameIndex,
   getFrameTimestamp,
   setState,
 } from 'glov/client/engine';
@@ -35,7 +36,7 @@ import { randSpatial } from 'glov/common/rand_fast';
 import { Rec } from 'glov/common/types';
 import { clamp, lerp, ridx, sign } from 'glov/common/util';
 import { JSVec2, v2iNormalize, v2lerp } from 'glov/common/vmath';
-import { SOUND_DATA } from './sound_data';
+import { playSound, SOUND_DATA } from './sound_data';
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const { abs, ceil, cos, floor, random, round, sin, max, min, exp, pow, PI } = Math;
@@ -154,6 +155,7 @@ const BREAKOUT_BLOCK_W = 4;
 
 interface Minigame {
   // constructor(xoffs: number, state: GameState);
+  state: GameState;
   xoffs: number;
   render(): void;
   renderDuringAnim?(): void;
@@ -163,6 +165,39 @@ interface Minigame {
   died(): void;
   level: number;
   score: number;
+  life_threshold?: number;
+  life_threshold_delta?: number;
+}
+
+const MAX_LIVES = 6;
+const EXTRA_LIVE_DELTA = 100;
+function addScore(game: Minigame, delta: number): void {
+  if (!game.life_threshold) {
+    game.life_threshold_delta = EXTRA_LIVE_DELTA * 2;
+    game.life_threshold = EXTRA_LIVE_DELTA * 2;
+  }
+  assert(game.life_threshold_delta);
+  game.score += delta;
+  while (game.score > game.life_threshold) {
+    let idx = game.state.minigames.indexOf(game);
+    if (game.state.lives[idx] === MAX_LIVES) {
+      // already at max lives, delay this one
+      game.life_threshold += EXTRA_LIVE_DELTA;
+    } else {
+      game.life_threshold_delta += EXTRA_LIVE_DELTA;
+      game.life_threshold += game.life_threshold_delta;
+      game.state.lives[idx]++;
+      game.state.flash_lives[idx] = 1500;
+      playSound('extralife', { stereo: stereo(game.xoffs + MINIGAME_W/2) });
+      game.state.floater({
+        x: game.xoffs + 4 + (idx === 1 ? 0 : -1),
+        y: MINIGAME_H + 2,
+        fg: 10,
+        text: 'EXTRA LIFE!',
+        timer: 1500,
+      });
+    }
+  }
 }
 
 type Ball = {
@@ -320,6 +355,9 @@ function help(xoffs: number, text: string, y?: number): void {
     });
   }
 }
+function stereo(x: number): number {
+  return clamp(lerp(x / ((MINIGAME_W + 1) * 4), -1, 1), -1, 1);
+}
 class BreakoutState implements Minigame {
   level = 0;
   score = 0;
@@ -399,6 +437,17 @@ class BreakoutState implements Minigame {
     this.newBall();
   }
 
+  bounce_idx = 0;
+  bounce_frame = -1;
+  bounce(x: number): void {
+    if (this.bounce_frame === getFrameIndex()) {
+      return;
+    }
+    this.bounce_frame = getFrameIndex();
+    playSound(`breakbounce${(this.bounce_idx % 2) + 1 as 1 |2}`, { stereo: stereo(x) });
+    this.bounce_idx++;
+  }
+
   update(dt: number): void {
     let { xoffs, state, w, h, player_width, board } = this;
     let { balls } = state;
@@ -420,15 +469,18 @@ class BreakoutState implements Minigame {
       if (ball_pos[0] < 0) {
         ball_pos[0] = 0 - ball_pos[0];
         ball_dir[0] *= -1;
+        this.bounce(ball_pos[0]);
       }
       let totalw = board[0].length; // (MINIGAME_W + 1) * 3;
       if (ball_pos[0] > totalw-1) {
         ball_pos[0] = totalw-1 - (ball_pos[0] - (totalw-1));
         ball_dir[0] *= -1;
+        this.bounce(ball_pos[0]);
       }
-      if (ball_pos[1] < 0) {
-        ball_pos[1] = 0 - ball_pos[1];
+      if (ball_pos[1] <= -0.25) {
+        ball_pos[1] = -0.25 + -0.25 - ball_pos[1];
         ball_dir[1] *= -1;
+        this.bounce(ball_pos[0]);
       }
       let bx = round(ball_pos[0]);
       let by = round(ball_pos[1]);
@@ -446,6 +498,8 @@ class BreakoutState implements Minigame {
             ball_dir[1] *= -1;
             ball_pos[1] = min(ball_pos[1], h - 2.5);
             let impact = clamp((ball_pos[0] - (this.player + xoffs)) / (player_width / 2), -1, 1);
+            let soundidx = abs(impact > 0.6 ? 3 : impact > 0.25 ? 2 : 1) as 1 | 2 | 3;
+            playSound(`paddle${soundidx}`, { stereo: stereo(ball_pos[0]) });
             impact *= 0.75;
             let vec = [sin(PI/2 * impact), -cos(PI/2 * impact)] as const;
             v2lerp(ball_dir, 0.5 + abs(impact) * 0.5, ball_dir, vec);
@@ -460,6 +514,7 @@ class BreakoutState implements Minigame {
             if (this.balls_left) {
               this.flash = 500;
               this.balls_left--;
+              playSound('die-breakout', { stereo: -0.5 });
             } else {
               lost = true;
             }
@@ -482,7 +537,7 @@ class BreakoutState implements Minigame {
             v = board[by][bx];
             if (!(v & (INDESTRUCTIBLE | BORDER)) && this.level) {
               let dscore = 10 + this.hits + (this.level - 1) * 0.5;
-              this.score += dscore;
+              addScore(this, dscore);
               this.hits++;
               if (dscore) {
                 state.floater({
@@ -492,6 +547,10 @@ class BreakoutState implements Minigame {
                   text: `+${dscore.toFixed(0)}`,
                 });
               }
+              let idx = (this.hits > 8 ? 8 - (this.hits % 2) : this.hits) as 1 | 8;
+              playSound(`breakout${idx}`, { stereo: stereo(ball_pos[0]) });
+            } else {
+              this.bounce(ball_pos[0]);
             }
             state.hitBlock(bx, by);
             if (bx !== old_bx) {
@@ -529,6 +588,7 @@ class BreakoutState implements Minigame {
     this.state.gameLost(this);
   }
   won(): void {
+    playSound('won-breakout', { stereo: -0.5 });
     this.state.gameWon(this);
   }
   render(): void {
@@ -548,6 +608,7 @@ class BreakoutState implements Minigame {
         w: MINIGAME_W,
         h: 3,
       });
+      terminal.normal();
     }
 
     let player_str = ['\x11'];
@@ -711,7 +772,7 @@ class BlocksState implements Minigame {
       if (color) {
         if (this.level) {
           let v = this.chain * 8;
-          this.score += v;
+          addScore(this, v);
           this.state.floater({
             x: xoffs + x * 2,
             y: y,
@@ -731,6 +792,9 @@ class BlocksState implements Minigame {
         this.chain++;
         this.setBoard(x, y, 0);
       }
+    }
+    if (to_clear.length) {
+      playSound('blocks-clear', { stereo: 0.5 });
     }
   }
   piece_count = 0;
@@ -778,9 +842,11 @@ class BlocksState implements Minigame {
     }
   }
   died(): void {
+    playSound('die-blocks', { stereo: 0.5 });
     this.state.gameLost(this);
   }
   won(): void {
+    playSound('won-blocks', { stereo: 0.5 });
     this.state.gameWon(this);
   }
   drop_speed = 0;
@@ -865,10 +931,12 @@ class BlocksState implements Minigame {
     let py = floor(pos[1]);
     if (py >= h) {
       this.setBoard(px, old_py, this.block);
+      playSound('blocks-place', { stereo: 0.5 });
       this.newPiece();
     } else if (this.logicBoard(px, py)) {
       if (py !== old_py) {
         this.setBoard(px, old_py, this.block);
+        playSound('blocks-place', { stereo: 0.5 });
         this.newPiece();
       } else {
         assert(false); // should have been blocked above
@@ -1025,9 +1093,11 @@ class InvadersState implements Minigame {
     }
   }
   died(): void {
+    playSound('die-invaders', { stereo: -1 });
     this.state.gameLost(this);
   }
   won(): void {
+    playSound('won-invaders', { stereo: -1 });
     this.state.gameWon(this);
   }
   updateInvaders(dt: number): void {
@@ -1113,6 +1183,7 @@ class InvadersState implements Minigame {
       ycounter: INVADER_BULLET_TIME,
     });
   }
+  last_sound_idx = -1;
   update(dt: number): void {
     let { w } = this;
     let hspd = 0.01 * 0.7;
@@ -1161,6 +1232,14 @@ class InvadersState implements Minigame {
       let item = invaders[ii];
       if (checkHit(item[0], item[1])) {
         invaders.splice(ii, 1);
+        while (true) {
+          let sound_idx = randInt(3) + 1 as 1 | 3;
+          if (sound_idx !== this.last_sound_idx) {
+            this.last_sound_idx = sound_idx;
+            playSound(`invaders-break${sound_idx}`, { stereo: -1 });
+            break;
+          }
+        }
         state.floater({
           x: item[0] + xoffs,
           y: item[1],
@@ -1169,7 +1248,7 @@ class InvadersState implements Minigame {
         });
         if (this.level) {
           let v = 4 + (this.level - 1) / 2;
-          this.score += v;
+          addScore(this, v);
           if (v) {
             state.floater({
               x: xoffs + item[0] + 1,
@@ -1187,6 +1266,7 @@ class InvadersState implements Minigame {
       if (b.type === 'invader_enemy') {
         if (checkHit(b.x - xoffs, b.y)) {
           bullets.splice(ii, 1);
+          playSound('invaders-bulletbreak', { stereo: -1 });
         }
       }
     }
@@ -1305,9 +1385,11 @@ class KaboomState implements Minigame {
     }
   }
   died(): void {
+    playSound('die-kaboom', { stereo: 1 });
     this.state.gameLost(this);
   }
   won(): void {
+    playSound('won-kaboom', { stereo: 1 });
     this.state.gameWon(this);
   }
   update(dt: number): void {
@@ -1370,13 +1452,16 @@ class KaboomState implements Minigame {
         b.y === py + 1 && b.x >= px + 1 && b.x < px + player_width - 1
       ) {
         this.points++;
+        let sound_idx = 2 - (this.points % 2) as 1 | 2;
+        playSound(`kaboom-catch${sound_idx}`, { stereo: 1 });
         if (this.level) {
           let v = 3 + (this.level - 1) / 5;
-          this.score += v;
+          addScore(this, v);
         }
         ridx(bullets, ii);
       } else if (board[b.y][b.x]) {
         state.hitBlock(b.x, b.y);
+        playSound('kaboom-break', { stereo: 1 });
         ridx(bullets, ii);
       }
     }
@@ -1451,7 +1536,6 @@ class KaboomState implements Minigame {
 
 const ANIM_LOST_TIME = 2000;
 const ANIM_WON_TIME = 2000;
-const MAX_LIVES = 6;
 
 const WALL_X = [
   0,
@@ -1460,7 +1544,7 @@ const WALL_X = [
   (MINIGAME_W + 1) * 3,
   (MINIGAME_W + 1) * 4 + 1 - 1,
 ];
-const INITIAL_HP = 3; // MODE_DEVELOPMENT ? 0 : 3;
+const INITIAL_HP = MODE_DEVELOPMENT ? 0 : 3;
 type GameData = {
   a: number;
   b: number;
@@ -1488,6 +1572,7 @@ class GameState {
   mode: 'explore' | 'combat' = 'explore';
   data: GameData = { a: 0, b: 0 };
   lives!: number[];
+  flash_lives!: number[];
   board!: Board;
   invaders!: InvadersState;
   breakout!: BreakoutState;
@@ -1543,6 +1628,9 @@ class GameState {
         let hp = 1;
         if (idx === 3) {
           hp = 3;
+        }
+        if (!INITIAL_HP) {
+          continue;
         }
         v |= hp << HP_SHIFT;
       }
@@ -1603,10 +1691,11 @@ class GameState {
     for (let ii = 0; ii < this.minigames.length; ++ii) {
       this.lives.push(3);
     }
+    this.flash_lives = [];
     this.game_over = false;
     this.meta = 0;
     if (MODE_DEVELOPMENT) {
-      while (this.meta < 0) {
+      while (this.meta < 6) {
         let idx = this.meta % 4;
         this.gameWon(this.minigames[idx]);
         this.minigames[idx].newBoard();
@@ -1677,9 +1766,6 @@ class GameState {
       max_counter: ANIM_WON_TIME,
     };
     this.animStarted(idx);
-    if (this.meta >= 4) {
-      this.lives[idx]++;
-    }
     game.level++;
     if (this.meta < META_MAP.length - 1) {
       this.meta++;
@@ -1741,7 +1827,7 @@ class GameState {
     this.updateLate(dt);
   }
   updateLate(dt: number): void {
-    let { bullets, balls } = this;
+    let { bullets, balls, flash_lives } = this;
     let ball_pos: Rec<number, Ball> = {};
     for (let ii = 0; ii < balls.length; ++ii) {
       let ball = balls[ii];
@@ -1751,6 +1837,14 @@ class GameState {
       let b = bullets[ii];
       if (ball_pos[b.x + b.y * 100]) {
         ridx(bullets, ii);
+      }
+    }
+    for (let ii = 0; ii < flash_lives.length; ++ii) {
+      if (flash_lives[ii]) {
+        flash_lives[ii] -= dt;
+        if (flash_lives[ii] < 0) {
+          flash_lives[ii] = 0;
+        }
       }
     }
   }
@@ -1784,11 +1878,11 @@ class GameState {
       }
     }
   }
-  hitBlock(bx: number, by: number): void {
+  hitBlock(bx: number, by: number): 'bounce' | 'destroy' {
     let { board } = this;
     let v = board[by][bx];
     if (v & (INDESTRUCTIBLE | NOBALLS)) {
-      return;
+      return 'bounce';
     }
     let newv = 0;
     if (v & HP) {
@@ -1815,6 +1909,7 @@ class GameState {
       w: block_w,
       text: FLOAT_DAMAGE,
     });
+    return 'destroy';
   }
 
   renderEarly(): void {
@@ -1859,7 +1954,7 @@ class GameState {
   }
 
   renderLate(): void {
-    let { active, anims, balls, bullets, minigames, lives, floaters } = this;
+    let { active, anims, balls, bullets, minigames, lives, flash_lives, floaters } = this;
     for (let ii = 0; ii < bullets.length; ++ii) {
       let b = bullets[ii];
       terminal.print({
@@ -1899,7 +1994,9 @@ class GameState {
         let ballsx = floor((MINIGAME_W - MAX_LIVES - 2) / 2);
         terminal.moveto(ballsx + xoffs, y);
         let border = 1;
-        if (lives[ii] >= MAX_LIVES) {
+        if (flash_lives[ii]) {
+          border = flash_lives[ii] % 250 < 100 ? 2 : 10;
+        } else if (lives[ii] >= MAX_LIVES) {
           border = 10;
         } else if (lives[ii] <= 1) {
           border = getFrameTimestamp() % 250 < 100 ? 4 : 12;
@@ -1912,7 +2009,7 @@ class GameState {
         terminal.print({ text: ']', fg: border });
 
         y++;
-        let text = `Level ${minigame.level}`;
+        let text = `  Level ${minigame.level}  `;
         ballsx = floor((MINIGAME_W - text.length) / 2);
         terminal.moveto(ballsx + xoffs, y);
         terminal.print({ text, fg: 7 });
@@ -2073,6 +2170,9 @@ class GameState {
           'VIEW SCORES',
         ],
       });
+      if (sel !== -1) {
+        playSound('button_click');
+      }
       if (sel === 0) {
         newGameInit();
       } else if (sel === 1) {
@@ -2278,6 +2378,9 @@ function menu(dt: number): void {
       'High Scores       ',
     ],
   });
+  if (sel !== -1) {
+    playSound('button_click');
+  }
 
   switch (sel) { // eslint-disable-line default-case
     case game_state ? 0 : -999:
