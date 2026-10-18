@@ -620,9 +620,39 @@ class BlocksState implements Minigame {
       this.setBoard(to_clear[ii][0], to_clear[ii][1], 0);
     }
   }
+  piece_count = 0;
   newPiece(): void {
     this.checkForClears();
     this.block = randInt(this.num_blocks) + 1;
+    if (this.level === 0) {
+      let highest_color = -1;
+      let seen_colors: Rec<number, true> = {};
+      let { w, h } = this;
+      for (let yy = 0; yy < h; ++yy) {
+        for (let xx = 0; xx < w; ++xx) {
+          let c = this.logicBoard(xx, yy);
+          if (c & TARGET) {
+            c &= ~TARGET;
+            if (highest_color === -1) {
+              highest_color = c & ~TARGET;
+            }
+            seen_colors[highest_color] = true;
+          }
+        }
+      }
+      if (this.piece_count === 0) {
+        this.block = highest_color;
+      } else if (this.piece_count === 1) {
+        if (!seen_colors[1]) {
+          this.block = 1;
+        } else if (!seen_colors[2]) {
+          this.block = 2;
+        } else {
+          this.block = 3;
+        }
+      }
+      this.piece_count++;
+    }
     this.pos = [this.w/2, 0];
     let px = round(this.pos[0]);
     let py = floor(this.pos[1]);

@@ -14,6 +14,5 @@ Acknowledgements:
 Start with: `npm start` (after running `npm i` once)
 
 TODO:
-* first dr mar piece should match the topmost virus, second should not
 * tweak font so that half blocks are exactly half
 * add score (total + shown per-minigame)
