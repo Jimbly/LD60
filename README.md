@@ -14,8 +14,6 @@ Acknowledgements:
 Start with: `npm start` (after running `npm i` once)
 
 TODO:
-* track: level of each game
-  * first level should be super easy
-* gravity in Blocks for non-targets when things under them break
+* first dr mar piece should match the topmost virus, second should not
 * tweak font so that half blocks are exactly half
-* win if all lives max out? scores?
+* add score (total + shown per-minigame)

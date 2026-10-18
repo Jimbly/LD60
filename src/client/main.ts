@@ -113,8 +113,8 @@ const BULLET_CH: Record<BulletType, string> = {
   kaboom: '\x0f',
 };
 const BULLET_FG: Record<BulletType, number> = {
-  invader_player: 10,
-  invader_enemy: 7,
+  invader_player: 7,
+  invader_enemy: 13,
   kaboom: 12,
 };
 type Bullet = {
@@ -361,13 +361,9 @@ class BreakoutState implements Minigame {
   update(dt: number): void {
     let { xoffs, state, w, h, player_width, board } = this;
     let { balls } = state;
-    let spd = dt * 0.02;
-    if (actionDown('left')) {
-      this.player = max((this.player_width - 1) / 2 + 1, this.player - spd);
-    }
-    if (actionDown('right')) {
-      this.player = min(w - (this.player_width - 1) / 2, this.player + spd);
-    }
+    let spd = 0.02;
+    this.player = max((this.player_width - 1) / 2 + 1, this.player - actionDown('left') * spd);
+    this.player = min(w - (this.player_width - 1) / 2, this.player + actionDown('right') * spd);
     if (!balls.length) {
       this.newBall();
     }
@@ -543,7 +539,7 @@ class BlocksState implements Minigame {
       xx++;
     }
     let v = board[y][xoffs + xx];
-    return v & (TARGET | COLORBITS);
+    return v & (TARGET | COLORBITS | INDESTRUCTIBLE);
   }
   checkCursorWipe(): void {
     let { pos, w } = this;
@@ -583,7 +579,7 @@ class BlocksState implements Minigame {
     board[py][xx] = v;
     board[py][xx+1] = v;
   }
-  newPiece(): void {
+  checkForClears(): void {
     let { w, h } = this;
     // check for clears
     let to_clear: JSVec2[] = [];
@@ -623,7 +619,9 @@ class BlocksState implements Minigame {
     for (let ii = 0; ii < to_clear.length; ++ii) {
       this.setBoard(to_clear[ii][0], to_clear[ii][1], 0);
     }
-
+  }
+  newPiece(): void {
+    this.checkForClears();
     this.block = randInt(this.num_blocks) + 1;
     this.pos = [this.w/2, 0];
     let px = round(this.pos[0]);
@@ -651,7 +649,7 @@ class BlocksState implements Minigame {
     for (let ii = 0; ii < num_targets; ++ii) {
       while (true) {
         let x = randInt(w);
-        let y = 4 + randInt(h - 4);
+        let y = 5 + randInt(h - 5);
         if (this.logicBoard(x, y)) {
           continue;
         }
@@ -662,9 +660,10 @@ class BlocksState implements Minigame {
     this.newPiece();
   }
   down_time = 0;
+  drop_timer = 0;
   update(dt: number): void {
     let { pos, w, h, board, xoffs } = this;
-    let pspd = dt / 250;
+    let pspd = 1 / 250;
     this.removeCursor();
     let old_px = round(pos[0]);
     let old_py = floor(pos[1]);
@@ -672,15 +671,11 @@ class BlocksState implements Minigame {
     if (actionEdge('left', { peek: true })) {
       pos[0] = round(pos[0]) - 0.51;
     }
-    if (actionDown('left')) {
-      pos[0] -= pspd;
-    }
+    pos[0] -= pspd * actionDown('left');
     if (actionEdge('right', { peek: true })) {
       pos[0] = round(pos[0]) + 0.51;
     }
-    if (actionDown('right')) {
-      pos[0] += pspd;
-    }
+    pos[0] += pspd * actionDown('right');
     let px = round(pos[0]);
     if (px > old_px && px === w || px < old_px && px === w - 1) {
       // bumping right edge, do damage, or pass through
@@ -713,7 +708,7 @@ class BlocksState implements Minigame {
       pos[1] = floor(pos[1]);
     }
     if (actionDown('down')) {
-      this.down_time += dt;
+      this.down_time += actionDown('down');
       if (this.down_time > 140) {
         pos[1] = old_py + 1;
         pos[1] = floor(pos[1]);
@@ -725,11 +720,11 @@ class BlocksState implements Minigame {
 
     let py = floor(pos[1]);
     if (py >= h) {
-      this.setBoard(old_px, old_py, this.block);
+      this.setBoard(px, old_py, this.block);
       this.newPiece();
     } else if (this.logicBoard(px, py)) {
       if (py !== old_py) {
-        this.setBoard(old_px, old_py, this.block);
+        this.setBoard(px, old_py, this.block);
         this.newPiece();
       } else {
         assert(false); // should have been blocked above
@@ -738,14 +733,31 @@ class BlocksState implements Minigame {
       this.addCursor();
     }
 
+    this.drop_timer -= dt;
+    let do_drops = this.drop_timer <= 0;
+    if (do_drops) {
+      this.drop_timer += 150;
+    }
+
     let any_targets = false;
-    for (let yy = 0; yy < h; ++yy) {
+    for (let yy = h - 1; yy >= 0; yy--) {
       for (let xx = 0; xx < w; ++xx) {
         let color = this.logicBoard(xx, yy);
         if (color & TARGET) {
           any_targets = true;
+        } else if (do_drops && color && !(color & INDESTRUCTIBLE) && yy < h - 1) {
+          // a plain piece
+          let below = this.logicBoard(xx, yy + 1);
+          if (!below) {
+            // nothing below, drop it!
+            this.setBoard(xx, yy, 0);
+            this.setBoard(xx, yy + 1, color);
+          }
         }
       }
+    }
+    if (do_drops) {
+      this.checkForClears();
     }
     if (!any_targets) {
       // win
@@ -789,9 +801,9 @@ class InvadersState implements Minigame {
     let opts = ['\x0f', '\x15'];
     let num_invaders;
     let invader_pad = 3;
-    let level_exp = pow(0.9, this.level - 1);
+    let level_exp = min(1, pow(0.9, this.level - 1));
     this.invader_move_time = 1000;
-    this.invader_shoot_time = round(lerp(level_exp, this.invader_move_time / 2, this.invader_move_time * 3));
+    this.invader_shoot_time = round(lerp(level_exp, this.invader_move_time / 2, this.invader_move_time * 4));
 
     if (this.level === 0) {
       num_invaders = 4;
@@ -934,13 +946,9 @@ class InvadersState implements Minigame {
   }
   update(dt: number): void {
     let { w } = this;
-    let hspd = dt * 0.01 * 0.7;
-    if (actionDown('left')) {
-      this.player = max(1, this.player - hspd);
-    }
-    if (actionDown('right')) {
-      this.player = min(w - 2, this.player + hspd);
-    }
+    let hspd = 0.01 * 0.7;
+    this.player = max(1, this.player - actionDown('left') * hspd);
+    this.player = min(w - 2, this.player + actionDown('right') * hspd);
 
     this.updateInvaders(dt);
     this.fireBullets(dt);
@@ -1154,13 +1162,9 @@ class KaboomState implements Minigame {
       this.enemy += delta;
     }
 
-    let hspd = dt * 0.01 * 4;
-    if (actionDown('left')) {
-      this.player = max((player_width - 1) / 2, this.player - hspd);
-    }
-    if (actionDown('right')) {
-      this.player = min(w - (player_width - 1) / 2 - 1, this.player + hspd);
-    }
+    let hspd = 0.01 * 4;
+    this.player = max((player_width - 1) / 2, this.player - actionDown('left') * hspd);
+    this.player = min(w - (player_width - 1) / 2 - 1, this.player + actionDown('right') * hspd);
 
     let px = round(this.player - (player_width - 1) / 2) + xoffs;
     let dead = false;
@@ -1389,12 +1393,10 @@ class GameState {
     this.game_over = false;
     this.meta = 0;
     if (MODE_DEVELOPMENT) {
-      while (this.meta < 3) {
+      while (this.meta < 5) {
         this.gameWon(this.minigames[this.meta % 4]);
       }
-      for (let ii = 0; ii < min(this.meta, this.minigames.length); ++ii) {
-        this.minigames[ii].level++;
-      }
+      this.anims = [];
     }
     this.active = META_MAP[this.meta];
     // if (MODE_DEVELOPMENT) {
