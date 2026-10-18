@@ -64,6 +64,7 @@ export type Score = {
   l3: number;
 };
 let score_system: ScoreSystem<Score>;
+let game_ready = false;
 
 function init(): void {
   terminal = terminalCreate({
@@ -135,12 +136,12 @@ type Board = number[][];
 type BulletType = 'invader_player' | 'invader_enemy' | 'kaboom';
 const BULLET_CH: Record<BulletType, string> = {
   invader_player: '|',
-  invader_enemy: '|',
+  invader_enemy: '│/─\\',
   kaboom: '\x0f',
 };
 const BULLET_FG: Record<BulletType, number> = {
   invader_player: 7,
-  invader_enemy: 13,
+  invader_enemy: 14,
   kaboom: 12,
 };
 type Bullet = {
@@ -253,12 +254,6 @@ const BREAKOUT_BOARDS = initBoards(`
 1.34
 
 .
-1234
-4.23
-34.2
-2341
-
-.
 xx.x
 xx.x
 x.xx
@@ -343,7 +338,7 @@ xxxx
 xxxx
 
 `);
-const NUM_BALLS = 8;
+const NUM_BALLS = 6;
 function help(xoffs: number, text: string, y?: number): void {
   let lines = text.split('\n');
   for (let ii = 0; ii < lines.length; ++ii) {
@@ -392,7 +387,7 @@ class BreakoutState implements Minigame {
     let { block_xoffs, w, board, xoffs, level } = this;
     let blocks_per_row = floor((w - block_xoffs) / BREAKOUT_BLOCK_W);
     let template = BREAKOUT_BOARDS[level];
-    this.ball_speed = lerp(pow(0.9, level), 2, 1);
+    this.ball_speed = lerp(pow(0.9, level), 3, 1);
     if (!template) {
       let total_blocks = min(30 + (level - BREAKOUT_BOARDS.length) * 3, 4 * (MINIGAME_H - 2));
       let too_many_a = total_blocks >= (3 * (MINIGAME_H - 3));
@@ -500,7 +495,7 @@ class BreakoutState implements Minigame {
           ) {
             ball_dir[1] *= -1;
             ball_pos[1] = min(ball_pos[1], h - 2.5);
-            let impact = clamp((ball_pos[0] - (this.player + xoffs)) / (player_width / 2), -1, 1);
+            let impact = clamp((ball_pos[0] - (player0 - 0.5 + player_width / 2)) / (player_width / 2), -1, 1);
             let soundidx = abs(impact > 0.6 ? 3 : impact > 0.25 ? 2 : 1) as 1 | 2 | 3;
             playSound(`paddle${soundidx}`, { stereo: stereo(ball_pos[0]) });
             impact *= 0.75;
@@ -856,9 +851,9 @@ class BlocksState implements Minigame {
   newBoard(): void {
     let { w, h, num_blocks, state, xoffs, level } = this;
     state.clearBoard(xoffs);
-    this.drop_speed = lerp(pow(0.9, level), 1.5, 1);
+    this.drop_speed = lerp(pow(0.9, level), 1.8, 1);
     let num_targets = min(level === 0 ? 3 :
-      6 + level * 3, 100);
+      10 + level * 5, 100);
     for (let ii = 0; ii < num_targets; ++ii) {
       while (true) {
         let x = randInt(w);
@@ -1006,7 +1001,7 @@ class BlocksState implements Minigame {
         }
       }
       if (yavail !== -1) {
-        help(xoffs, 'Match same-colored\nblocks.\nClear the \x02\x02 to\nwin.', yavail);
+        help(xoffs, 'Match colors.\nClear \x02\x02 to win.\n↓ or S to drop', yavail);
       }
     }
   }
@@ -1256,7 +1251,7 @@ class InvadersState implements Minigame {
           fg: 12,
         });
         if (this.level) {
-          let v = 4 + (this.level - 1) / 2;
+          let v = 7 + this.level;
           addScore(this, v);
           if (v) {
             state.floater({
@@ -1298,7 +1293,7 @@ class InvadersState implements Minigame {
     let { invaders, player, w, h, xoffs, level } = this;
 
     if (!level) {
-      help(xoffs, 'Shoot the\ninvaders.\nDon\'t get hit');
+      help(xoffs, 'Shoot the\ninvaders.\nDon\'t get hit\n\nUse A/D or ←→\nor Gamepad');
     }
 
     // terminal.print({
@@ -1365,7 +1360,7 @@ class KaboomState implements Minigame {
     this.shoot_count = 0;
     this.bullet_counter = KABOOM_BULLET_TIME / 2;
     this.points = 0;
-    this.goal = 20 + max(0, (level - 1) * 4);
+    this.goal = 20 + max(0, (level - 1) * 8);
     let level_exp = min(1, pow(0.9, level - 1));
     this.kaboom_speed = round(lerp(level_exp, 40, 100));
     this.kaboom_shoot_rest_time = round(lerp(level_exp, 2000, 4000));
@@ -1501,7 +1496,7 @@ class KaboomState implements Minigame {
     if (!any_left) {
       dead = true;
     }
-    if (this.points === this.goal) {
+    if (this.points >= this.goal) {
       this.won();
     } else if (dead) {
       this.died();
@@ -1725,7 +1720,7 @@ class GameState {
     this.flash_lives = [];
     this.game_over = false;
     this.meta = 0;
-    if (MODE_DEVELOPMENT) {
+    if (MODE_DEVELOPMENT && true) {
       while (this.meta < 6) {
         let idx = this.meta % 4;
         this.gameWon(this.minigames[idx]);
@@ -1828,7 +1823,11 @@ class GameState {
     }
   }
 
+  anim_ts = 0;
   update(dt: number): void {
+    if (game_ready) {
+      this.anim_ts += dt;
+    }
     this.updateFloaters(dt);
     this.updateBullets(dt);
     for (let ii = 0; ii < this.minigames.length; ++ii) {
@@ -1946,18 +1945,23 @@ class GameState {
   renderEarly(): void {
     terminal.normal();
     terminal.fill({
-      x: 0, y: 0,
-      w: (MINIGAME_W + 1) * 4,
+      x: 1, y: 0,
+      w: (MINIGAME_W + 1) * 4 - 1,
       h: MINIGAME_H,
     });
 
-    let { board } = this;
+    let { board, active } = this;
 
     for (let yy = 0; yy < board.length; ++yy) {
       let row = board[yy];
       for (let xx = 0; xx < row.length; ++xx) {
         let v = row[xx];
         if (!v) {
+          continue;
+        }
+        let xm = xx % (MINIGAME_W + 1);
+        let game_idx = clamp(floor(xx / (MINIGAME_W + 1)), 0, 3);
+        if (!active[game_idx] && !(active[game_idx - 1] && xm === 0)) {
           continue;
         }
         let ch = (v & INDESTRUCTIBLE) ? '▓' : (v & TARGET) ? '\x02' : '█';
@@ -1988,11 +1992,12 @@ class GameState {
     let { active, anims, balls, bullets, minigames, lives, flash_lives, floaters } = this;
     for (let ii = 0; ii < bullets.length; ++ii) {
       let b = bullets[ii];
+      let chs = BULLET_CH[b.type];
       terminal.print({
         x: b.x,
         y: b.y,
         fg: BULLET_FG[b.type],
-        text: BULLET_CH[b.type],
+        text: chs[floor(getFrameTimestamp() / 100) % chs.length],
       });
     }
 
@@ -2071,7 +2076,7 @@ class GameState {
       }
     }
 
-    for (let ii = 0; ii < active.length; ++ii) {
+    for (let ii = 0; ii < 4; ++ii) {
       if (!active[ii]) {
         let minigame = minigames[ii];
         if (anims[ii]) {
@@ -2084,7 +2089,7 @@ class GameState {
           for (let yy = 0; yy < MINIGAME_H; ++yy) {
             for (let xx = 0; xx < MINIGAME_W; ++xx) {
               let ch = String.fromCharCode(ansi_to_unicode_a[
-                176 + floor(((randSpatial(777, xx + xoffs, yy, 1) + getFrameTimestamp()/190000)%1) * (247-176))]);
+                176 + floor(((randSpatial(777, xx + xoffs, yy, 1) + this.anim_ts/190000)%1) * (247-176))]);
               terminal.print({
                 x: xx + xoffs,
                 y: yy,
@@ -2254,6 +2259,7 @@ let views: [string, Box][] = [
   ['KABOOM', view_kaboom],
 ];
 let need_clear = false;
+let game_ready_cb_queued = false;
 function statePlay(dt: number): void {
   tickMusic('game');
   if (need_clear) {
@@ -2264,7 +2270,7 @@ function statePlay(dt: number): void {
   if (MODE_DEVELOPMENT && keyDown(KEYS.SHIFT)) {
     dt *= 4;
   }
-  if (terminalSettingsVisible()) {
+  if (terminalSettingsVisible() || !game_ready) {
     dt = 0;
   }
   terminal.auto_scroll = false;
@@ -2317,6 +2323,13 @@ function statePlay(dt: number): void {
   game_state.checkGameOver();
 
   terminal.render();
+  if (!game_ready_cb_queued) {
+    game_ready_cb_queued = true;
+    terminal.queueCb(function () {
+      game_ready = true;
+      terminal.baud = Infinity;
+    });
+  }
 
   if (actionEdge('cancel')) {
     menuInit();
@@ -2481,8 +2494,8 @@ const TITLE = `[?7h[255D[0;1;34mÛÛÛÛÛÛ[30m»  [34mÛÛÛÛÛÛ[30m»
   }
 }).join('').replace(/\n/g, '\r\n');
 function menuInit(): void {
-  terminal.baud = MODE_DEVELOPMENT ? Infinity : 14400;
-  terminal.draw_cursor = [1, 4];
+  terminal.baud = 14400;
+  terminal.draw_cursor = null; // [1, 4];
   terminal.color(7,0);
   terminal.clear();
   terminalSettingsInit(terminal);
@@ -2531,9 +2544,11 @@ function menuInit(): void {
 }
 
 function statePlayInit(): void {
-  terminal.baud = Infinity;
+  terminal.baud = MODE_DEVELOPMENT ? Infinity : 14400;
   terminal.draw_cursor = false;
   need_clear = true;
+  game_ready = false;
+  game_ready_cb_queued = false;
   setState(statePlay);
 }
 
@@ -2601,6 +2616,6 @@ export function main(): void {
     if (debugDefineIsSet('OPTS')) {
       // optionsMenu('title');
     }
-    // newGameInit();
+    newGameInit();
   }
 }
