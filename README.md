@@ -14,5 +14,4 @@ Acknowledgements:
 Start with: `npm start` (after running `npm i` once)
 
 TODO:
-* tweak font so that half blocks are exactly half
 * add score (total + shown per-minigame)
