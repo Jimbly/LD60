@@ -56,7 +56,7 @@ const ansi_to_unicode = [
   8805,8804,8992,8993,247,8776,176,8729,183,8730,8319,178,9632,160
 ];
 
-type SubView = {
+export type TerminalSubView = {
   x: number;
   y: number;
   w: number;
@@ -78,7 +78,7 @@ type Mod = {
   fg: number;
   bg: number;
   attr: number;
-  sub_view: SubView | null;
+  sub_view: TerminalSubView | null;
   next: Mod | null;
 } & ({
   type: typeof MOD_CB;
@@ -144,7 +144,7 @@ export type TerminalCodePage = 'ansi' | 'unicode';
 
 export type TerminalParams = Partial<{
   baud: number;
-  draw_cursor: JSVec2 | null;
+  draw_cursor: JSVec2 | null | false;
   sounds: boolean;
   x: number;
   y: number;
@@ -167,7 +167,7 @@ export type TerminalPrintParams = Partial<{
   fg: number;
   bg: number;
   codepage: TerminalCodePage;
-  text: string | number | number[] | string[];
+  text: string | number | (number|string)[];
 
   center: boolean;
   w: number;
@@ -205,7 +205,7 @@ export type TerminalMenuParams = {
 class Terminal {
   baud: number;
   frame = 0;
-  draw_cursor: JSVec2 | null;
+  draw_cursor: JSVec2 | null | false;
   sounds: boolean;
   cp: TerminalCodePage = 'ansi';
   // screen buffer
@@ -234,7 +234,7 @@ class Terminal {
   mod_tail: Mod | null = null;
   mod_countdown = 0;
   // current sub-view
-  sub_view: SubView | null = null;
+  sub_view: TerminalSubView | null = null;
   x0: number = 0;
   y0: number = 0;
   x1: number;
@@ -542,7 +542,7 @@ class Terminal {
     }
   }
 
-  subViewPush(sub_view: SubView): void {
+  subViewPush(sub_view: TerminalSubView): void {
     assert(!this.sub_view);
     if (typeof sub_view.cursor_x === 'number') {
       this.moveto(sub_view.cursor_x, sub_view.cursor_y);

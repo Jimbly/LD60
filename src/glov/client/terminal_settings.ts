@@ -1,20 +1,33 @@
-const { ansi, padRight } = require('../common/ansi.js');
-const { capitalize, clamp } = require('../common/util');
-const { actionEdge } = require('./actions');
-const engine = require('./engine.js');
-const input = require('./input.js');
-const { KEYS } = require('./input.js');
-const settings = require('./settings');
-const { settingsSet } = require('./settings');
-const { terminalCreate } = require('./terminal.js');
+import { ansi, padRight } from '../common/ansi';
+import { capitalize, clamp } from '../common/util';
+import { actionEdge } from './actions';
+import {
+  addTickFunc,
+  getViewportPostprocess,
+  setViewportPostprocess,
+} from './engine';
+import {
+  keyDownEdge,
+  KEYS,
+} from './input';
+import {
+  settingsGet,
+  settingsSet,
+} from './settings';
+import {
+  Terminal,
+  terminalCreate,
+} from './terminal';
 
 const { round } = Math;
+export type TerminalSettingsEntries = 'sound' | 'music' | 'display' | 'modem';
+export type TerminalSettingsParams = Record<TerminalSettingsEntries, string | false | true>;
 
-let opts;
-let settings_terminal;
-let base_terminal;
+let opts: TerminalSettingsParams;
+let settings_terminal: Terminal;
+let base_terminal: Terminal;
 let settings_up = false;
-export function terminalSettingsVisible() {
+export function terminalSettingsVisible(): boolean {
   return settings_up;
 }
 
@@ -25,12 +38,12 @@ const MODEMS = [
   { baud: Infinity, label: 'NULL' },
 ];
 
-export function terminalSettingsShow() {
+export function terminalSettingsShow(): void {
   settings_up = true;
 }
 
-function settingsOverlay(dt) {
-  if (input.keyDownEdge(KEYS.O)) {
+function settingsOverlay(dt: number): void {
+  if (keyDownEdge(KEYS.O)) {
     settings_up = !settings_up;
   }
   if (settings_up) {
@@ -45,9 +58,9 @@ function settingsOverlay(dt) {
         modem_idx = ii;
       }
     }
-    let item_ids = [];
-    let item_names = [];
-    function item(id, name) {
+    let item_ids: (TerminalSettingsEntries | 'exit')[] = [];
+    let item_names: string[] = [];
+    function item(id: (TerminalSettingsEntries | 'exit'), name: string): void {
       item_ids.push(id);
       item_names.push(padRight(name, 34));
     }
@@ -55,13 +68,13 @@ function settingsOverlay(dt) {
       item('modem', `${opts.modem}: ${MODEMS[modem_idx].label}`);
     }
     if (opts.display) {
-      item('display', `${opts.display}: ${engine.getViewportPostprocess() ? 'CRT' : 'LCD'}`);
+      item('display', `${opts.display}: ${getViewportPostprocess() ? 'CRT' : 'LCD'}`);
     }
     if (opts.sound) {
-      item('sound', `${opts.sound}: ${round(settings.volume_sound * 10)}`);
+      item('sound', `${opts.sound}: ${round(settingsGet('volume_sound') * 10)}`);
     }
     if (opts.music) {
-      item('music', `${opts.music}: ${round(settings.volume_music * 10)}`);
+      item('music', `${opts.music}: ${round(settingsGet('volume_music') * 10)}`);
     }
     item('exit', `Exit ${ansi.yellow.bright('[O]')}ptions`);
     let sel = settings_terminal.menu({
@@ -82,14 +95,14 @@ function settingsOverlay(dt) {
         base_terminal.baud = MODEMS[modem_idx].baud;
         break;
       case 'display':
-        engine.setViewportPostprocess(!engine.getViewportPostprocess());
+        setViewportPostprocess(!getViewportPostprocess());
         break;
       case 'sound': {
-        let v = clamp(round(settings.volume_sound * 10) + settings_terminal.menu_select_delta, 0, 10) / 10;
+        let v = clamp(round(settingsGet('volume_sound') * 10) + settings_terminal.menu_select_delta, 0, 10) / 10;
         settingsSet('volume_sound', v);
       } break;
       case 'music': {
-        let v = clamp(round(settings.volume_music * 10) + settings_terminal.menu_select_delta, 0, 10) / 10;
+        let v = clamp(round(settingsGet('volume_music') * 10) + settings_terminal.menu_select_delta, 0, 10) / 10;
         settingsSet('volume_music', v);
       } break;
       default:
@@ -103,20 +116,21 @@ function settingsOverlay(dt) {
   }
 }
 
-export function terminalSettingsInit(terminal, opts_in) {
-  opts = opts_in || {};
-  opts.sound = opts.sound ?? terminal.sounds;
-  opts.music = opts.music ?? terminal.sounds;
+export function terminalSettingsInit(terminal: Terminal, opts_in?: Partial<TerminalSettingsParams>): void {
+  let opts_partial = opts_in || {};
+  opts_partial.sound = opts_partial.sound ?? terminal.sounds;
+  opts_partial.music = opts_partial.music ?? terminal.sounds;
   let num_items = 1;
-  ['modem', 'display', 'sound', 'music'].forEach(function (key) {
-    opts[key] = opts[key] ?? true;
-    if (opts[key] === true) {
-      opts[key] = capitalize(key);
+  (['modem', 'display', 'sound', 'music'] as const).forEach(function (key) {
+    opts_partial[key] = opts_partial[key] ?? true;
+    if (opts_partial[key] === true) {
+      opts_partial[key] = capitalize(key);
     }
-    if (opts[key]) {
+    if (opts_partial[key]) {
       ++num_items;
     }
   });
+  opts = opts_partial as TerminalSettingsParams;
   base_terminal = terminal;
   settings_terminal = terminalCreate({
     auto_scroll: false,
@@ -149,5 +163,5 @@ export function terminalSettingsInit(terminal, opts_in) {
     ch: '▓',
   });
 
-  engine.addTickFunc(settingsOverlay);
+  addTickFunc(settingsOverlay);
 }
