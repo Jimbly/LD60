@@ -48,7 +48,7 @@ import {
   uiGetFont,
   uiTextHeight,
 } from 'glov/client/ui';
-import { ansi, stripAnsi } from 'glov/common/ansi';
+import { ansi } from 'glov/common/ansi';
 import { randSpatial } from 'glov/common/rand_fast';
 import { Rec } from 'glov/common/types';
 import { clamp, lerp, ridx, sign } from 'glov/common/util';
@@ -362,7 +362,9 @@ function help(xoffs: number, text: string, y?: number): void {
     let line = lines[ii];
     terminal.print({
       fg: 8,
-      x: xoffs + floor((MINIGAME_W - line.length) / 2),
+      x: xoffs,
+      w: MINIGAME_W,
+      center: true,
       y: (y || MINIGAME_H / 2) + ii,
       text: line,
     });
@@ -1550,14 +1552,6 @@ class KaboomState implements Minigame {
     overlay(max(0, px) + 1, py + 1, '\\═/');
     terminal.normal();
 
-    if (MODE_DEVELOPMENT && false) {
-      terminal.print({
-        x: this.enemy_target + xoffs,
-        y: 0,
-        fg: 12,
-        text: '\x02',
-      });
-    }
     terminal.print({
       x: enemy + xoffs,
       y: 0,
@@ -1569,11 +1563,13 @@ class KaboomState implements Minigame {
   renderDuringAnim(): void {
     let { xoffs, points, goal, h } = this;
     let text = `${points} / ${goal}`;
-    let ballsx = floor((MINIGAME_W - text.length - 2) / 2) + 1;
-    terminal.moveto(ballsx + xoffs, h);
-    terminal.print({ text: '╡', fg: BLOCK_COLORS[BORDER_BLOCK] });
-    terminal.print({ text, fg: 10 });
-    terminal.print({ text: '╞', fg: BLOCK_COLORS[BORDER_BLOCK] });
+    terminal.print({
+      x: xoffs,
+      y: h,
+      w: MINIGAME_W,
+      center: true,
+      text: ansi.cyan('╡') + ansi.green.bright(text) + ansi.cyan('╞'),
+    });
   }
 }
 
@@ -1737,8 +1733,8 @@ class GameState {
     this.flash_lives = [];
     this.game_over = false;
     this.meta = 0;
-    if (MODE_DEVELOPMENT && false) {
-      while (this.meta < 6) {
+    if (MODE_DEVELOPMENT && true) {
+      while (this.meta < 5) {
         let idx = this.meta % 4;
         this.gameWon(this.minigames[idx]);
         this.minigames[idx].newBoard();
@@ -2062,30 +2058,45 @@ class GameState {
         terminal.print({ text: ']', fg: border });
 
         y++;
-        let text = `  Level ${minigame.level}  `;
-        ballsx = floor((MINIGAME_W - text.length) / 2);
-        terminal.moveto(ballsx + xoffs, y);
-        terminal.print({ text, fg: 7 });
+        terminal.print({
+          x: xoffs, y,
+          w: MINIGAME_W,
+          center: true,
+          fg: 7,
+          text: `  Level ${minigame.level}  `,
+        });
 
         y++;
         total_score += minigame.score;
-        text = `Score ${ansi.green.bright(minigame.score.toFixed(0))}`;
-        ballsx = floor((MINIGAME_W - stripAnsi(text).length) / 2);
-        terminal.moveto(ballsx + xoffs, y);
-        terminal.print({ text, fg: 8 });
+        terminal.print({
+          x: xoffs, y,
+          w: MINIGAME_W,
+          center: true,
+          fg: 8,
+          text: `Score ${ansi.green.bright(minigame.score.toFixed(0))}`,
+        });
       }
       let y = MINIGAME_H + 1;
-      let text = 'Total';
-      terminal.moveto(floor((WINCHS - text.length)/2), y);
-      terminal.print({ text, fg: 8 });
+      terminal.print({
+        x: floor((WINCHS - 11) / 2), w: 11, y,
+        center: true,
+        fg: 8,
+        text: 'Total',
+      });
       y++;
-      text = 'Score';
-      terminal.moveto(floor((WINCHS - text.length)/2), y);
-      terminal.print({ text, fg: 8 });
+      terminal.print({
+        x: floor((WINCHS - 11) / 2), w: 11, y,
+        center: true,
+        fg: 8,
+        text: 'Score',
+      });
       y++;
-      text = `${ansi.yellow.bright(total_score.toFixed(0))}`;
-      terminal.moveto(floor((WINCHS - stripAnsi(text).length)/2), y);
-      terminal.print({ text, fg: 7 });
+      terminal.print({
+        x: floor((WINCHS - 11) / 2), w: 11, y,
+        center: true,
+        fg: 14,
+        text: `${total_score.toFixed(0)}`
+      });
 
       if (total_score > this.total_score) {
         this.total_score = total_score;
@@ -2536,11 +2547,11 @@ function menuInit(): void {
     terminal.finishAnimating();
   }
 
-  let line = '  By Jimb Esser for Ludum Dare 60  ';
   terminal.print({
-    x: floor((WINCHS - line.length) / 2),
+    x: 0, w: WINCHS,
+    center: true,
     y: HINCHS - 3,
-    text: line,
+    text: '  By Jimb Esser for Ludum Dare 60  ',
     fg: 0,
     bg: 8,
   });
