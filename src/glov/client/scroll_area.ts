@@ -562,11 +562,15 @@ class ScrollAreaInternal implements ScrollArea {
       });
     }
 
-    if (scrollbar_handle.texs[0].wrap_t === gl.REPEAT || true) { // LDJAM
-      ui.drawBoxTiled({
-        x: bar_x0, y: handle_screenpos, z: this.z + 0.3,
+    if (scrollbar_handle.texs[0].wrap_t === gl.REPEAT) {
+      let handle_v0 = 0;
+      let handle_v1 = handle_v0 + handle_pixel_h / pixel_scale / scrollbar_handle.uidata.total_h;
+      scrollbar_handle.draw({
+        x: bar_x0, y: handle_screenpos, z: this.z+0.1,
         w: bar_w, h: handle_pixel_h,
-      }, scrollbar_handle, pixel_scale, handle_color);
+        uvs: [scrollbar_handle.uvs[0], handle_v0, scrollbar_handle.uvs[2], handle_v1],
+        color: handle_color,
+      });
     } else {
       ui.drawVBox({
         x: bar_x0, y: handle_screenpos, z: this.z + 0.3,

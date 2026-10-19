@@ -2631,12 +2631,9 @@ export function main(): void {
   menuInit();
 
   if (MODE_DEVELOPMENT) {
+    newGameInit();
     if (debugDefineIsSet('HISCORE')) {
       setState(stateScores);
     }
-    if (debugDefineIsSet('OPTS')) {
-      // optionsMenu('title');
-    }
-    newGameInit();
   }
 }
