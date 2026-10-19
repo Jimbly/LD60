@@ -2574,7 +2574,7 @@ function menuInit(): void {
 
 function statePlayInit(): void {
   terminal.baud = MODE_DEVELOPMENT ? Infinity : 14400;
-  terminal.draw_cursor = false;
+  terminal.draw_cursor = null;
   need_clear = true;
   game_ready = false;
   game_ready_cb_queued = false;
