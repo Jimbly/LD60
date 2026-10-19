@@ -37,7 +37,7 @@ import { netInit } from 'glov/client/net';
 import { scoreAlloc, ScoreSystem } from 'glov/client/score';
 import { scoresDraw } from 'glov/client/score_ui';
 import { spriteSetGet } from 'glov/client/sprite_sets';
-import { ansi_to_unicode_a, terminalCreate } from 'glov/client/terminal';
+import { terminalCreate } from 'glov/client/terminal';
 import { terminalSettingsInit, terminalSettingsShow, terminalSettingsVisible } from 'glov/client/terminal_settings';
 import {
   buttonText,
@@ -2103,10 +2103,11 @@ class GameState {
           if (ii === 1) {
             xoffs++;
           }
+          terminal.codepage('ansi');
           for (let yy = 0; yy < MINIGAME_H; ++yy) {
             for (let xx = 0; xx < MINIGAME_W; ++xx) {
-              let ch = String.fromCharCode(ansi_to_unicode_a[
-                176 + floor(((randSpatial(777, xx + xoffs, yy, 1) + this.anim_ts/190000)%1) * (247-176))]);
+              let ch = String.fromCharCode(
+                176 + floor(((randSpatial(777, xx + xoffs, yy, 1) + this.anim_ts/190000)%1) * (247-176)));
               terminal.print({
                 x: xx + xoffs,
                 y: yy,
@@ -2116,6 +2117,7 @@ class GameState {
               });
             }
           }
+          terminal.codepage('unicode');
         }
       }
     }
@@ -2502,14 +2504,7 @@ const TITLE = `[?7h[255D[0;1;34mÛÛÛÛÛÛ[30m»  [34mÛÛÛÛÛÛ[30m»
 [35mÛÛ[30mº [35mÛÛ[30mºÈ[35mÛÛ[30m»[35mÛÛ[30mº È[35mÛÛ[30m» [35mÛÛ[30mÉ¼ [35mÛÛ[30mÉÍÍ[35mÛÛ[30mº [35mÛÛ[30mº  [35mÛÛ[30mº [35mÛÛ[30mÉÍÍ¼   [35mÛÛ[30mÉÍÍ[35mÛÛ[30m» ÈÍÍÍÍ[35mÛÛ[30mº
 [35mÛÛ[30mº [35mÛÛ[30mº È[35mÛÛÛÛ[30mº  È[35mÛÛÛÛ[30mÉ¼  [35mÛÛ[30mº  [35mÛÛ[30mº [35mÛÛÛÛÛÛ[30mÉ¼ [35mÛÛÛÛÛÛÛ[30m» [35mÛÛ[30mº  [35mÛÛ[30mº [35mÛÛÛÛÛÛÛ[30mº
 ÈÍ¼ ÈÍ¼  ÈÍÍÍ¼   ÈÍÍÍ¼   ÈÍ¼  ÈÍ¼ ÈÍÍÍÍÍ¼  ÈÍÍÍÍÍÍ¼ ÈÍ¼  ÈÍ¼ ÈÍÍÍÍÍÍ¼
-`.split('').map(function (ch) {
-  let idx = ch.charCodeAt(0);
-  if (ansi_to_unicode_a[idx]) {
-    return String.fromCharCode(ansi_to_unicode_a[idx]);
-  } else {
-    return ch;
-  }
-}).join('').replace(/\n/g, '\r\n');
+`.replace(/\n/g, '\r\n');
 function menuInit(): void {
   terminal.baud = 14400;
   terminal.draw_cursor = null; // [1, 4];
@@ -2530,8 +2525,10 @@ function menuInit(): void {
   terminal.print({
     x: 0,
     y: 0,
+    codepage: 'ansi',
     text: TITLE,
   });
+  terminal.codepage('unicode');
   terminal.subViewPop();
   terminal.normal();
 
@@ -2631,7 +2628,7 @@ export function main(): void {
   menuInit();
 
   if (MODE_DEVELOPMENT) {
-    newGameInit();
+    // newGameInit();
     if (debugDefineIsSet('HISCORE')) {
       setState(stateScores);
     }
