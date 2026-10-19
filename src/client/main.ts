@@ -2515,7 +2515,11 @@ function menuInit(): void {
   terminal.draw_cursor = null; // [1, 4];
   terminal.color(7,0);
   terminal.clear();
-  terminalSettingsInit(terminal);
+  terminalSettingsInit(terminal, {
+    modem: false,
+    sound: true,
+    music: 'Ambience',
+  });
 
   terminal.subViewPush({
     x: 4,

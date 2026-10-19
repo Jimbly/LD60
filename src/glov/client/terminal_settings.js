@@ -1,5 +1,6 @@
 const { ansi, padRight } = require('../common/ansi.js');
-const { clamp } = require('../common/util');
+const { capitalize, clamp } = require('../common/util');
+const { actionEdge } = require('./actions');
 const engine = require('./engine.js');
 const input = require('./input.js');
 const { KEYS } = require('./input.js');
@@ -9,6 +10,7 @@ const { terminalCreate } = require('./terminal.js');
 
 const { round } = Math;
 
+let opts;
 let settings_terminal;
 let base_terminal;
 let settings_up = false;
@@ -43,6 +45,25 @@ function settingsOverlay(dt) {
         modem_idx = ii;
       }
     }
+    let item_ids = [];
+    let item_names = [];
+    function item(id, name) {
+      item_ids.push(id);
+      item_names.push(padRight(name, 34));
+    }
+    if (opts.modem) {
+      item('modem', `${opts.modem}: ${MODEMS[modem_idx].label}`);
+    }
+    if (opts.display) {
+      item('display', `${opts.display}: ${engine.getViewportPostprocess() ? 'CRT' : 'LCD'}`);
+    }
+    if (opts.sound) {
+      item('sound', `${opts.sound}: ${round(settings.volume_sound * 10)}`);
+    }
+    if (opts.music) {
+      item('music', `${opts.music}: ${round(settings.volume_music * 10)}`);
+    }
+    item('exit', `Exit ${ansi.yellow.bright('[O]')}ptions`);
     let sel = settings_terminal.menu({
       x: 0, y: 1,
       color_sel: { fg: 7, bg: 0 },
@@ -52,26 +73,29 @@ function settingsOverlay(dt) {
       pre_unsel: '   ',
       key: 'terminal_settings',
       allow_leftright: true,
-      items: [
-        // padRight(`Modem: ${MODEMS[modem_idx].label}`, 34), // LDJAM
-        padRight(`Display: ${engine.getViewportPostprocess() ? 'CRT' : 'LCD'}`, 34),
-        padRight(`Sound: ${round(settings.volume_sound * 10)}`, 34), // LDJAM
-        padRight(`Ambience: ${round(settings.volume_music * 10)}`, 34), // LDJAM
-        padRight(`Exit ${ansi.yellow.bright('[O]')}ptions`, 34),
-      ],
+      items: item_names
     });
-    if (sel === -2) { // LDJAM
-      modem_idx = (modem_idx + settings_terminal.menu_select_delta + MODEMS.length) % MODEMS.length;
-      base_terminal.baud = MODEMS[modem_idx].baud;
-    } else if (sel === 0) { // LDJAM
-      engine.setViewportPostprocess(!engine.getViewportPostprocess());
-    } else if (sel === 1) { // LDJAM
-      let v = clamp(round(settings.volume_sound * 10) + settings_terminal.menu_select_delta, 0, 10) / 10;
-      settingsSet('volume_sound', v);
-    } else if (sel === 2) { // LDJAM
-      let v = clamp(round(settings.volume_music * 10) + settings_terminal.menu_select_delta, 0, 10) / 10;
-      settingsSet('volume_music', v);
-    } else if (sel === 3 || input.keyDownEdge(KEYS.ESCAPE)) { // LDJAM
+    let sel_id = item_ids[sel];
+    switch (sel_id) {
+      case 'modem':
+        modem_idx = (modem_idx + settings_terminal.menu_select_delta + MODEMS.length) % MODEMS.length;
+        base_terminal.baud = MODEMS[modem_idx].baud;
+        break;
+      case 'display':
+        engine.setViewportPostprocess(!engine.getViewportPostprocess());
+        break;
+      case 'sound': {
+        let v = clamp(round(settings.volume_sound * 10) + settings_terminal.menu_select_delta, 0, 10) / 10;
+        settingsSet('volume_sound', v);
+      } break;
+      case 'music': {
+        let v = clamp(round(settings.volume_music * 10) + settings_terminal.menu_select_delta, 0, 10) / 10;
+        settingsSet('volume_music', v);
+      } break;
+      default:
+        // Nothing
+    }
+    if (sel_id === 'exit' || actionEdge('cancel')) {
       settings_up = false;
     }
 
@@ -79,7 +103,20 @@ function settingsOverlay(dt) {
   }
 }
 
-export function terminalSettingsInit(terminal) {
+export function terminalSettingsInit(terminal, opts_in) {
+  opts = opts_in || {};
+  opts.sound = opts.sound ?? terminal.sounds;
+  opts.music = opts.music ?? terminal.sounds;
+  let num_items = 1;
+  ['modem', 'display', 'sound', 'music'].forEach(function (key) {
+    opts[key] = opts[key] ?? true;
+    if (opts[key] === true) {
+      opts[key] = capitalize(key);
+    }
+    if (opts[key]) {
+      ++num_items;
+    }
+  });
   base_terminal = terminal;
   settings_terminal = terminalCreate({
     auto_scroll: false,
@@ -90,7 +127,7 @@ export function terminalSettingsInit(terminal) {
     char_height: terminal.char_height,
     z: Z.DEBUG,
     w: 38,
-    h: 7,
+    h: num_items + 3,
     draw_cursor: false,
   });
   settings_terminal.color(7+8, 1);

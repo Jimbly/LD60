@@ -108,6 +108,7 @@ class GlovTerminal {
     this.baud = params.baud ?? 9600;
     this.frame = 0;
     this.draw_cursor = params.draw_cursor ?? [1,4];
+    this.sounds = params.sounds ?? true;
     // screen buffer
     this.render_x = params.x || 0;
     this.render_y = params.y || 0;
@@ -683,6 +684,11 @@ class GlovTerminal {
       }
     }
   }
+  sound(id) {
+    if (this.sounds) {
+      ui.playUISound(id);
+    }
+  }
 
   menu(params) {
     let { x, y, items, allow_leftright } = params;
@@ -703,19 +709,19 @@ class GlovTerminal {
 
     if (actionEdge('down')) {
       this.menu_idx++;
-      ui.playUISound('rollover');
+      this.sound('rollover');
     }
     if (actionEdge('up')) {
       this.menu_idx--;
-      ui.playUISound('rollover');
+      this.sound('rollover');
     }
     if (input.keyDownEdge(KEYS.HOME)) {
       this.menu_idx = 0;
-      ui.playUISound('rollover');
+      this.sound('rollover');
     }
     if (input.keyDownEdge(KEYS.END)) {
       this.menu_idx = items.length - 1;
-      ui.playUISound('rollover');
+      this.sound('rollover');
     }
 
     let max_w = 0;
@@ -765,7 +771,7 @@ class GlovTerminal {
       } else if (input.mouseMoved() && input.mouseOver(param)) {
         if (this.menu_idx !== ii) {
           this.menu_idx = ii;
-          ui.playUISound('rollover');
+          this.sound('rollover');
         }
       }
       if (hotkey && input.keyDownEdge(KEYS.A + hotkey.charCodeAt(0) - 'A'.charCodeAt(0))) {
@@ -823,7 +829,7 @@ class GlovTerminal {
     this.color(color_unsel.fg, color_unsel.bg);
 
     if (ret !== -1) {
-      ui.playUISound('button_click');
+      this.sound('button_click');
     }
     return ret;
   }
